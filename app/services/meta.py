@@ -23,28 +23,32 @@ META_GRAPH_URL = "https://graph.facebook.com/v21.0"
 
 def verify_webhook_signature(payload: bytes, signature: str) -> bool:
     """Verify that the webhook payload came from Meta, not a spoofer."""
-    if not settings.META_APP_SECRET:
-        logger.warning("META_APP_SECRET not set — skipping signature verification")
-        return True
-
     if not signature:
         logger.warning("No signature header present — rejecting")
         return False
 
-    expected = hmac.HMAC(
-        key=settings.META_APP_SECRET.encode("utf-8"),
-        msg=payload,
-        digestmod=hashlib.sha256,
-    ).hexdigest()
+    secrets_to_try = []
+    if settings.META_APP_SECRET:
+        secrets_to_try.append(settings.META_APP_SECRET)
+    if settings.META_IG_APP_SECRET:
+        secrets_to_try.append(settings.META_IG_APP_SECRET)
 
-    expected_full = f"sha256={expected}"
-    match = hmac.compare_digest(expected_full, signature)
-    
-    if not match:
-        logger.error(f"Signature mismatch: expected={expected_full[:20]}... got={signature[:20]}...")
-    
-    return match
+    if not secrets_to_try:
+        logger.warning("No app secrets configured — skipping signature verification")
+        return True
 
+    for secret in secrets_to_try:
+        expected = hmac.HMAC(
+            key=secret.encode("utf-8"),
+            msg=payload,
+            digestmod=hashlib.sha256,
+        ).hexdigest()
+        if hmac.compare_digest(f"sha256={expected}", signature):
+            return True
+
+    logger.error(f"Signature mismatch: got={signature[:30]}...")
+    return False
+    
 # ============================================================
 # PARSE INCOMING WEBHOOK PAYLOADS
 # ============================================================
