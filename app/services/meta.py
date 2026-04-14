@@ -27,14 +27,23 @@ def verify_webhook_signature(payload: bytes, signature: str) -> bool:
         logger.warning("META_APP_SECRET not set — skipping signature verification")
         return True
 
+    if not signature:
+        logger.warning("No signature header present — rejecting")
+        return False
+
     expected = hmac.HMAC(
         key=settings.META_APP_SECRET.encode("utf-8"),
         msg=payload,
         digestmod=hashlib.sha256,
     ).hexdigest()
 
-    return hmac.compare_digest(f"sha256={expected}", signature)
-
+    expected_full = f"sha256={expected}"
+    match = hmac.compare_digest(expected_full, signature)
+    
+    if not match:
+        logger.error(f"Signature mismatch: expected={expected_full[:20]}... got={signature[:20]}...")
+    
+    return match
 
 # ============================================================
 # PARSE INCOMING WEBHOOK PAYLOADS
