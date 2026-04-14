@@ -27,12 +27,12 @@ def verify_webhook_signature(payload: bytes, signature: str) -> bool:
         logger.warning("META_APP_SECRET not set — skipping signature verification")
         return True
 
-    expected = hmac.new(
-        settings.META_APP_SECRET.encode("utf-8"),
-        payload,
-        hashlib.sha256,
+    expected = hmac.HMAC(
+        key=settings.META_APP_SECRET.encode("utf-8"),
+        msg=payload,
+        digestmod=hashlib.sha256,
     ).hexdigest()
-
+    
     return hmac.compare_digest(f"sha256={expected}", signature)
 
 
@@ -285,17 +285,3 @@ async def send_messenger_message(recipient_id: str, text: str, page_access_token
 # UNIFIED SEND (Routes to correct channel)
 # ============================================================
 
-async def send_reply(channel: str, sender_id: str, text: str, phone_number_id: str = None, page_access_token: str = None) -> dict:
-    """Send a reply on the same channel the customer used."""
-    logger.info(f"send_reply called: channel={channel}, to={sender_id}, phone_number_id={phone_number_id}")
-
-    if channel == "whatsapp":
-        if not phone_number_id:
-            logger.error("Cannot send WhatsApp reply without phone_number_id")
-            return {"error": "missing phone_number_id"}
-        return await send_whatsapp_message(phone_number_id, sender_id, text)
-    elif channel in ("facebook", "instagram"):
-        return await send_messenger_message(sender_id, text, page_access_token=page_access_token)
-    else:
-        logger.warning(f"send_reply called for unsupported channel: {channel}")
-        return {"error": f"unsupported channel: {channel}"}
