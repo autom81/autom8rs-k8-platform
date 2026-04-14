@@ -7,6 +7,7 @@ from sqlalchemy import text
 from app.database import engine, Base, get_db
 import app.models  # Forces Python to read schema files
 from app.routes.webhooks import router as webhooks_router
+from app.routes.admin import router as admin_router
 
 # Configure logging
 logging.basicConfig(
@@ -21,6 +22,7 @@ app = FastAPI(title="K8 Agent Platform", version="0.1.0")
 
 # Register routes
 app.include_router(webhooks_router)
+app.include_router(admin_router)
 
 
 @app.get("/")
