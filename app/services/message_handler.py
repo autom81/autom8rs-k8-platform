@@ -255,18 +255,15 @@ async def handle_message(
         save_message(db, conversation.id, "assistant", reply_text)
 
         # 13. Send reply to customer
-        await send_reply(
+await send_reply(
             channel=channel,
             sender_id=external_user_id,
             text=reply_text,
             phone_number_id=phone_number_id or business.meta_phone_number_id,
             page_access_token=business.meta_page_access_token,
+            page_id=business.meta_waba_id,
         )
-        logger.info(
-            f"Handled message on {channel} for business={business.name}, "
-            f"user={external_user_id[:8]}..."
-        )
-
+        
     except Exception as e:
         logger.error(f"Error in handle_message: {e}", exc_info=True)
     finally:

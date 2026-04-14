@@ -48,7 +48,7 @@ def verify_webhook_signature(payload: bytes, signature: str) -> bool:
 
     logger.error(f"Signature mismatch: got={signature[:30]}...")
     return False
-    
+
 # ============================================================
 # PARSE INCOMING WEBHOOK PAYLOADS
 # ============================================================
@@ -254,13 +254,15 @@ async def send_whatsapp_message(phone_number_id: str, to: str, text: str) -> dic
         return {"error": str(e)}
 
 
-async def send_messenger_message(recipient_id: str, text: str, page_access_token: str = None) -> dict:
+async def send_messenger_message(recipient_id: str, text: str, page_access_token: str = None, page_id: str = None) -> dict:
     """Send a text message via Messenger or Instagram DM."""
     token = page_access_token or settings.META_ACCESS_TOKEN
+    # Use page_id for Instagram, /me for Messenger
+    endpoint = f"{META_GRAPH_URL}/{page_id}/messages" if page_id else f"{META_GRAPH_URL}/me/messages"
     try:
         async with httpx.AsyncClient() as http:
             resp = await http.post(
-                f"{META_GRAPH_URL}/me/messages",
+                endpoint,
                 headers={
                     "Authorization": f"Bearer {token}",
                     "Content-Type": "application/json",
@@ -280,25 +282,25 @@ async def send_messenger_message(recipient_id: str, text: str, page_access_token
             resp.raise_for_status()
 
             data = resp.json()
-            logger.info(f"Messenger message sent to {recipient_id}")
+            logger.info(f"Message sent to {recipient_id} via {endpoint}")
             return data
 
     except httpx.HTTPStatusError as e:
         logger.error(
-            f"Failed to send Messenger message to {recipient_id}: "
+            f"Failed to send message to {recipient_id}: "
             f"status={e.response.status_code}, "
             f"body={e.response.text}"
         )
         return {"error": str(e), "details": e.response.text}
     except Exception as e:
-        logger.error(f"Failed to send Messenger message to {recipient_id}: {e}")
+        logger.error(f"Failed to send message to {recipient_id}: {e}")
         return {"error": str(e)}
 
 # ============================================================
 # UNIFIED SEND (Routes to correct channel)
 # ============================================================
 
-async def send_reply(channel: str, sender_id: str, text: str, phone_number_id: str = None, page_access_token: str = None) -> dict:
+async def send_reply(channel: str, sender_id: str, text: str, phone_number_id: str = None, page_access_token: str = None, page_id: str = None) -> dict:
     """Send a reply on the same channel the customer used."""
     logger.info(f"send_reply called: channel={channel}, to={sender_id}, phone_number_id={phone_number_id}")
 
@@ -308,7 +310,7 @@ async def send_reply(channel: str, sender_id: str, text: str, phone_number_id: s
             return {"error": "missing phone_number_id"}
         return await send_whatsapp_message(phone_number_id, sender_id, text)
     elif channel in ("facebook", "instagram"):
-        return await send_messenger_message(sender_id, text, page_access_token=page_access_token)
+        return await send_messenger_message(sender_id, text, page_access_token=page_access_token, page_id=page_id if channel == "instagram" else None)
     else:
         logger.warning(f"send_reply called for unsupported channel: {channel}")
         return {"error": f"unsupported channel: {channel}"}
