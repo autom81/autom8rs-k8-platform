@@ -32,14 +32,19 @@ def _lookup_business_by_phone_number_id(phone_number_id: str, db: Session):
 
 def _lookup_business_by_page_id(page_id: str, db: Session):
     """
-    Find the business that owns this Facebook Page.
-    For now, we use meta_waba_id to also store the page ID.
-    You may want a separate field or mapping table later.
+    Find the business that owns this Facebook Page or Instagram account.
+    Checks meta_waba_id (Page ID) and instagram_account_id.
     """
-    return db.query(Business).filter(
+    business = db.query(Business).filter(
         Business.meta_waba_id == page_id
     ).first()
-
+    
+    if not business:
+        business = db.query(Business).filter(
+            Business.instagram_account_id == page_id
+        ).first()
+    
+    return business
 
 # ============================================================
 # WEBHOOK VERIFICATION (GET) — Meta sends this to confirm URL
