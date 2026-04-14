@@ -241,14 +241,15 @@ async def send_whatsapp_message(phone_number_id: str, to: str, text: str) -> dic
         return {"error": str(e)}
 
 
-async def send_messenger_message(recipient_id: str, text: str) -> dict:
+async def send_messenger_message(recipient_id: str, text: str, page_access_token: str = None) -> dict:
     """Send a text message via Messenger or Instagram DM."""
+    token = page_access_token or settings.META_ACCESS_TOKEN
     try:
         async with httpx.AsyncClient() as http:
             resp = await http.post(
                 f"{META_GRAPH_URL}/me/messages",
                 headers={
-                    "Authorization": f"Bearer {settings.META_ACCESS_TOKEN}",
+                    "Authorization": f"Bearer {token}",
                     "Content-Type": "application/json",
                 },
                 json={
@@ -280,12 +281,11 @@ async def send_messenger_message(recipient_id: str, text: str) -> dict:
         logger.error(f"Failed to send Messenger message to {recipient_id}: {e}")
         return {"error": str(e)}
 
-
 # ============================================================
 # UNIFIED SEND (Routes to correct channel)
 # ============================================================
 
-async def send_reply(channel: str, sender_id: str, text: str, phone_number_id: str = None) -> dict:
+async def send_reply(channel: str, sender_id: str, text: str, phone_number_id: str = None, page_access_token: str = None) -> dict:
     """Send a reply on the same channel the customer used."""
     logger.info(f"send_reply called: channel={channel}, to={sender_id}, phone_number_id={phone_number_id}")
 
@@ -295,7 +295,7 @@ async def send_reply(channel: str, sender_id: str, text: str, phone_number_id: s
             return {"error": "missing phone_number_id"}
         return await send_whatsapp_message(phone_number_id, sender_id, text)
     elif channel in ("facebook", "instagram"):
-        return await send_messenger_message(sender_id, text)
+        return await send_messenger_message(sender_id, text, page_access_token=page_access_token)
     else:
         logger.warning(f"send_reply called for unsupported channel: {channel}")
         return {"error": f"unsupported channel: {channel}"}

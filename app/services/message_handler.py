@@ -260,8 +260,8 @@ async def handle_message(
             sender_id=external_user_id,
             text=reply_text,
             phone_number_id=phone_number_id or business.meta_phone_number_id,
+            page_access_token=business.meta_page_access_token,
         )
-
         logger.info(
             f"Handled message on {channel} for business={business.name}, "
             f"user={external_user_id[:8]}..."

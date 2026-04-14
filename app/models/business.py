@@ -32,6 +32,8 @@ class Business(Base):
     meta_phone_number_id = Column(String)
     meta_waba_id = Column(String)
     meta_page_access_token = Column(Text, nullable=True)
+    instagram_account_id = Column(String, nullable=True)
+    meta_page_access_token = Column(Text, nullable=True)
     max_products = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
