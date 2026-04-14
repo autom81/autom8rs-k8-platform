@@ -1,35 +1,171 @@
+"""
+Core Message Handler
+The brain of K8. Every channel funnels into handle_message().
+"""
 import logging
+import uuid
+from datetime import datetime, timezone
+
+from sqlalchemy.orm import Session
+
+from app.database import SessionLocal
+from app.models.conversation import Conversation, Message
+from app.models.business import Business, Product
+from app.services.llm import client as openrouter_client, select_model
+from app.services.prompt_builder import build_system_prompt
+from app.services.meta import send_reply, download_whatsapp_media
 
 logger = logging.getLogger(__name__)
 
-# ==========================================
-# PLACEHOLDER HELPERS (To be built in Phase 3/4)
-# ==========================================
-class MockResult:
-    def __init__(self):
-        self.reply = "This is a placeholder reply."
 
-class MockBusiness:
-    tier = "pro"
+# ============================================================
+# DATABASE HELPERS
+# ============================================================
 
-async def get_or_create_conversation(business_id, external_user_id, channel, metadata): 
-    # Mocks a conversation object so the status check works
-    return type('obj', (object,), {'id': '123', 'status': 'active'})()
-
-async def save_message(conv_id, role, text): pass
-async def notify_owner_of_new_message(conv): pass
-async def transcribe_voice(url): return "Transcribed text"
-async def build_system_prompt(biz_id, user_id, meta): return "You are a helpful AI."
-async def get_recent_messages(conv_id, limit=10): return []
-async def select_model(biz_id, text): return "openrouter-model"
-async def get_tools_for_tier(tier): return []
-async def process_llm_response(resp, conv, biz_id): return MockResult()
-async def send_reply(channel, user_id, reply): pass
+def _get_db():
+    """Get a fresh DB session for background tasks."""
+    return SessionLocal()
 
 
-# ==========================================
-# 2.4 CORE MESSAGE HANDLER
-# ==========================================
+def get_or_create_conversation(
+    db: Session,
+    business_id: str,
+    external_user_id: str,
+    channel: str,
+    metadata: dict = None,
+) -> Conversation:
+    """Find existing active conversation or create a new one."""
+    convo = (
+        db.query(Conversation)
+        .filter(
+            Conversation.business_id == uuid.UUID(business_id),
+            Conversation.external_user_id == external_user_id,
+            Conversation.channel == channel,
+            Conversation.status.in_(["active", "escalated"]),
+        )
+        .first()
+    )
+
+    if convo:
+        convo.last_message_at = datetime.now(timezone.utc)
+        db.commit()
+        return convo
+
+    source = "organic"
+    if metadata and metadata.get("source") == "ctwa_ad":
+        source = "ctwa_ad"
+
+    convo = Conversation(
+        id=uuid.uuid4(),
+        business_id=uuid.UUID(business_id),
+        external_user_id=external_user_id,
+        channel=channel,
+        status="active",
+        source=source,
+    )
+    db.add(convo)
+    db.commit()
+    db.refresh(convo)
+    return convo
+
+
+def save_message(
+    db: Session,
+    conversation_id,
+    role: str,
+    content: str,
+    media_url: str = None,
+    media_type: str = None,
+    was_voice_note: bool = False,
+    original_transcript: str = None,
+):
+    """Save a message to the database."""
+    msg = Message(
+        id=uuid.uuid4(),
+        conversation_id=conversation_id,
+        role=role,
+        content=content,
+        media_url=media_url,
+        media_type=media_type,
+        was_voice_note=was_voice_note,
+        original_transcript=original_transcript,
+    )
+    db.add(msg)
+    db.commit()
+    return msg
+
+
+def get_recent_messages(db: Session, conversation_id, limit: int = 10) -> list[dict]:
+    """Load recent messages for conversation context."""
+    messages = (
+        db.query(Message)
+        .filter(Message.conversation_id == conversation_id)
+        .order_by(Message.timestamp.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {"role": m.role, "content": m.content}
+        for m in reversed(messages)
+    ]
+
+
+def get_business(db: Session, business_id: str) -> Business:
+    """Load business record."""
+    return db.query(Business).filter(
+        Business.id == uuid.UUID(business_id)
+    ).first()
+
+
+# ============================================================
+# LLM CALL
+# ============================================================
+
+async def call_llm(model: str, messages: list, tools: list = None):
+    """Call OpenRouter and return the response."""
+    kwargs = {
+        "model": model,
+        "messages": messages,
+    }
+    if tools:
+        kwargs["tools"] = tools
+
+    try:
+        response = await openrouter_client.chat.completions.create(**kwargs)
+        return response
+    except Exception as e:
+        logger.error(f"OpenRouter API error: {e}")
+        return None
+
+
+def extract_reply(response) -> str:
+    """Extract the text reply from an OpenRouter response."""
+    if not response:
+        return "I'm having a little trouble right now. Please try again in a moment."
+
+    try:
+        choice = response.choices[0]
+        message = choice.message
+
+        if message.content:
+            return message.content
+
+        if message.tool_calls:
+            logger.info(f"LLM returned tool calls: {[tc.function.name for tc in message.tool_calls]}")
+            # TODO: Execute tool calls and feed results back to LLM
+            return "Let me look into that for you..."
+
+        return "I'm not sure how to respond to that. Let me escalate to the team."
+
+    except Exception as e:
+        logger.error(f"Error extracting reply: {e}")
+        return "I'm having a little trouble right now. Please try again in a moment."
+
+
+# ============================================================
+# CORE MESSAGE HANDLER
+# ============================================================
+
 async def handle_message(
     business_id: str,
     channel: str,
@@ -37,58 +173,102 @@ async def handle_message(
     message_text: str,
     media_url: str = None,
     media_type: str = None,
-    message_metadata: dict = None  # Contains ad source, etc.
+    message_metadata: dict = None,
+    phone_number_id: str = None,
+    db: Session = None,
 ):
-    # 1. Get or create conversation
-    conversation = await get_or_create_conversation(
-        business_id, external_user_id, channel, message_metadata
-    )
+    """
+    Process an incoming message from any channel.
+    Called as a background task from the webhook handler.
+    """
+    own_db = False
+    if db is None:
+        db = _get_db()
+        own_db = True
 
-    # 2. Check if escalated — if so, don’t auto-reply
-    if conversation.status == "escalated":
-        await save_message(conversation.id, "user", message_text)
-        await notify_owner_of_new_message(conversation)
-        return  # Human is handling this conversation
+    try:
+        # 1. Load business
+        business = get_business(db, business_id)
+        if not business:
+            logger.error(f"Business not found: {business_id}")
+            return
 
-    # 3. Handle voice notes (Pro+)
-    if media_type == "audio":
-        message_text = await transcribe_voice(media_url)
+        # 2. Get or create conversation
+        conversation = get_or_create_conversation(
+            db, business_id, external_user_id, channel, message_metadata
+        )
 
-    # 4. Build dynamic system prompt
-    system_prompt = await build_system_prompt(
-        business_id, external_user_id, message_metadata
-    )
+        # 3. If escalated, save message but don't auto-reply
+        if conversation.status == "escalated":
+            save_message(db, conversation.id, "user", message_text,
+                        media_url=media_url, media_type=media_type)
+            logger.info(f"Conversation {conversation.id} is escalated — skipping auto-reply")
+            return
 
-    # 5. Load conversation history (last 10 messages)
-    history = await get_recent_messages(conversation.id, limit=10)
+        # 4. Handle voice notes
+        voice_transcript = None
+        if media_type == "audio" and media_url:
+            if channel == "whatsapp":
+                audio_bytes = await download_whatsapp_media(media_url)
+                if audio_bytes:
+                    # TODO: Whisper transcription
+                    voice_transcript = "[Voice note received — transcription coming soon]"
+                    message_text = voice_transcript
+                else:
+                    message_text = "[Voice note — could not download]"
+            else:
+                voice_transcript = "[Voice note received — transcription coming soon]"
+                message_text = voice_transcript
 
-    # 6. Build messages array for LLM
-    messages = [
-        {"role": "system", "content": system_prompt},
-        *history,
-        {"role": "user", "content": message_text}
-    ]
+        # 5. Save the user's message
+        save_message(
+            db, conversation.id, "user", message_text,
+            media_url=media_url, media_type=media_type,
+            was_voice_note=(media_type == "audio"),
+            original_transcript=voice_transcript,
+        )
 
-    # 7. Select model based on tier + complexity
-    model = await select_model(business_id, message_text)
+        # 6. Build dynamic system prompt
+        system_prompt = await build_system_prompt(
+            db, business_id, external_user_id, message_metadata
+        )
 
-    # 8. Call OpenRouter with function calling tools
-    business = MockBusiness() # Mocked for now
-    tools = await get_tools_for_tier(business.tier)
-    
-    # Placeholder for the actual OpenRouter API call
-    response = {"status": "mock_response"} 
+        # 7. Load conversation history
+        history = get_recent_messages(db, conversation.id, limit=10)
 
-    # 9. Process response — may include function calls
-    result = await process_llm_response(
-        response, conversation, business_id
-    )
+        # 8. Build messages for LLM (history already includes the latest user message)
+        llm_messages = [
+            {"role": "system", "content": system_prompt},
+            *history,
+        ]
 
-    # 10. Save messages to DB
-    await save_message(conversation.id, "user", message_text)
-    await save_message(conversation.id, "assistant", result.reply)
+        # 9. Select model
+        model = await select_model(business_id, message_text, db)
 
-    # 11. Send reply via same channel
-    await send_reply(channel, external_user_id, result.reply)
-    
-    return result.reply
+        # 10. Call LLM
+        response = await call_llm(model, llm_messages)
+
+        # 11. Extract reply
+        reply_text = extract_reply(response)
+
+        # 12. Save assistant reply
+        save_message(db, conversation.id, "assistant", reply_text)
+
+        # 13. Send reply to customer
+        await send_reply(
+            channel=channel,
+            sender_id=external_user_id,
+            text=reply_text,
+            phone_number_id=phone_number_id or business.meta_phone_number_id,
+        )
+
+        logger.info(
+            f"Handled message on {channel} for business={business.name}, "
+            f"user={external_user_id[:8]}..."
+        )
+
+    except Exception as e:
+        logger.error(f"Error in handle_message: {e}", exc_info=True)
+    finally:
+        if own_db:
+            db.close()
