@@ -215,10 +215,27 @@ async def send_whatsapp_message(phone_number_id: str, to: str, text: str) -> dic
                     "text": {"body": text},
                 },
             )
+
+            # Log the full response for debugging
+            if resp.status_code != 200:
+                logger.error(
+                    f"WhatsApp API error sending to {to}: "
+                    f"status={resp.status_code}, "
+                    f"response={resp.text}"
+                )
             resp.raise_for_status()
+
             data = resp.json()
             logger.info(f"WhatsApp message sent to {to}")
             return data
+
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            f"Failed to send WhatsApp message to {to}: "
+            f"status={e.response.status_code}, "
+            f"body={e.response.text}"
+        )
+        return {"error": str(e), "details": e.response.text}
     except Exception as e:
         logger.error(f"Failed to send WhatsApp message to {to}: {e}")
         return {"error": str(e)}
@@ -239,10 +256,26 @@ async def send_messenger_message(recipient_id: str, text: str) -> dict:
                     "message": {"text": text},
                 },
             )
+
+            if resp.status_code != 200:
+                logger.error(
+                    f"Messenger API error sending to {recipient_id}: "
+                    f"status={resp.status_code}, "
+                    f"response={resp.text}"
+                )
             resp.raise_for_status()
+
             data = resp.json()
             logger.info(f"Messenger message sent to {recipient_id}")
             return data
+
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            f"Failed to send Messenger message to {recipient_id}: "
+            f"status={e.response.status_code}, "
+            f"body={e.response.text}"
+        )
+        return {"error": str(e), "details": e.response.text}
     except Exception as e:
         logger.error(f"Failed to send Messenger message to {recipient_id}: {e}")
         return {"error": str(e)}
@@ -254,6 +287,8 @@ async def send_messenger_message(recipient_id: str, text: str) -> dict:
 
 async def send_reply(channel: str, sender_id: str, text: str, phone_number_id: str = None) -> dict:
     """Send a reply on the same channel the customer used."""
+    logger.info(f"send_reply called: channel={channel}, to={sender_id}, phone_number_id={phone_number_id}")
+
     if channel == "whatsapp":
         if not phone_number_id:
             logger.error("Cannot send WhatsApp reply without phone_number_id")
