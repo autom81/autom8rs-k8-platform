@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     META_VERIFY_TOKEN: str = "autom8rs_verify_2026"
     META_ACCESS_TOKEN: str = ""
     META_APP_SECRET: str = ""  # For webhook signature verification
+    META_IG_APP_SECRET: str = ""  # Instagram app secret (different from main app secret)
 
     # Whisper (voice notes)
     WHISPER_API_KEY: Optional[str] = None  # OpenAI API key for Whisper
