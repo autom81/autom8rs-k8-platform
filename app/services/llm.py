@@ -91,13 +91,11 @@ async def select_model(
         logger.info(f"Routing to Claude (complex reasoning) for business={business_id[:8]}")
         return MODEL_CLAUDE
     
-    # Phase 6: Prefer Claude for Ultra tier when tools are available
-    # Claude Sonnet 4.5 has significantly better tool calling than Gemma
-    if needs_tools and tier_value in ("ultra", "custom"):
-        logger.info(f"Routing to Claude (tool calling) for business={business_id[:8]}")
+    # Phase 6: Only use Claude for Ultra when genuinely complex reasoning needed
+    # Gemma handles tool calls fine for standard conversations
+    if tier_value in ("ultra", "custom") and _needs_complex_reasoning(message_text):
+        logger.info(f"Routing to Claude (complex reasoning) for business={business_id[:8]}")
         return MODEL_CLAUDE
-
-    return MODEL_GEMMA  # Default to cheap model
 
 
 # ============================================================
