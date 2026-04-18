@@ -308,9 +308,16 @@ async def handle_message(
             result = extract_reply(response)
 
             if result["type"] == "text":
-                # LLM gave a final text response - we're done
-                reply_text = result["content"]
+    # Strip Gemma's chain-of-thought prefix
+    reply_text = result["content"]
+    if reply_text.lower().startswith("thought"):
+        lines = reply_text.split("\n")
+        # Remove lines until we hit actual content
+        for i, line in enumerate(lines):
+            if line.strip() and not line.lower().startswith("thought"):
+                reply_text = "\n".join(lines[i:]).strip()
                 break
+    break
 
             if result["type"] == "tool_use" and result["tool_calls"]:
                 # LLM wants to call tools
