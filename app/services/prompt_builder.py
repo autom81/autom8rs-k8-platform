@@ -1,6 +1,12 @@
 """
-Dynamic Prompt Builder
-Assembles the system prompt from live database data on every message.
+Dynamic Prompt Builder - UPDATED for Phase 6
+=============================================
+
+Changes from original:
+- Uses Redis cache for business + product data (faster)
+- Adds tool usage guidelines section to every prompt
+- Condensed product format (saves tokens)
+- Conditional product inclusion (skips for smalltalk)
 """
 import logging
 import uuid
@@ -8,29 +14,71 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from app.models.business import Business, Product
 from app.models.conversation import Conversation, Message
 from app.models.lead import Lead
+from app.services.cache import BusinessCache, ProductCache
 
 logger = logging.getLogger(__name__)
 
 
 # ============================================================
-# INVENTORY SECTION (DYNAMIC — generated from products table)
+# TOOL USAGE GUIDELINES
+# Added to every prompt so LLM knows when/how to use tools
 # ============================================================
 
-def format_inventory_section(products: list[Product]) -> str:
-    """Generate the inventory section from live product data."""
+TOOL_GUIDELINES = """
+=== TOOL USAGE GUIDELINES ===
+You have access to tools. Use them proactively - don't describe what you'll do, just do it.
+
+ALWAYS use tools when:
+- Customer asks about a product → check_stock()
+- Customer wants to know total cost → calculate_total()
+- Customer provides name + address + phone (any order) → place_order() IMMEDIATELY
+- Customer says "cancel" + has an order → cancel_order()
+- Customer asks to see product photo/video → send_product_media()
+- Customer asks to speak to a human → escalate_to_human()
+- Customer is clearly frustrated or angry → escalate_to_human()
+- You can tell what kind of conversation this is → update_lead_status()
+
+ORDERING RULES (CRITICAL):
+- Required to place order: customer_name AND delivery_address AND customer_phone
+- If all 3 provided → place_order() IMMEDIATELY. Do NOT ask "are you sure?"
+- If missing 1 piece → ask ONLY for that specific missing piece
+- Product comes from conversation context (what they said they want)
+- After placing order → send the confirmation_message from the result
+
+LEAD CLASSIFICATION:
+- Update early and often as the conversation reveals intent
+- hot = they ordered or are about to order
+- warm = asking about specific products
+- cold = general browsing
+- post_purchase = asking about an existing order
+- support = has a problem or complaint
+- spam = irrelevant/abusive
+==============================
+"""
+
+
+# ============================================================
+# INVENTORY SECTION
+# Condensed format to save tokens
+# ============================================================
+
+def format_inventory_section(products: list) -> str:
+    """
+    Format product list into condensed prompt section.
+    Uses pipe-separated format to minimize token usage.
+    """
     if not products:
         return "\n\n=== INVENTORY ===\nNo products currently loaded.\n================\n"
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    lines = [f"\n\n=== CURRENT INVENTORY (Updated: {now}) ===\n"]
+    lines = [f"\n\n=== CURRENT INVENTORY (Updated: {now}) ==="]
 
     # Group by category
     categories = {}
     for p in products:
-        cat = p.category or "General"
+        cat = p.get('category') or 'General'
         if cat not in categories:
             categories[cat] = []
         categories[cat].append(p)
@@ -38,55 +86,56 @@ def format_inventory_section(products: list[Product]) -> str:
     for cat, items in categories.items():
         lines.append(f"\n{cat}:")
         for p in items:
-            price_str = f"${p.price} {p.currency}" if p.price else "Price TBD"
+            price = p.get('price', 'TBD')
+            qty = p.get('quantity', 0) or 0
+            status = p.get('status', 'active')
 
-            # Handle variants (e.g., sizes) vs simple quantity
-            if p.variants and isinstance(p.variants, dict):
-                stock_parts = []
-                for variant, qty in p.variants.items():
-                    if qty == 0:
-                        stock_parts.append(f"{variant}(0-OUT OF STOCK)")
-                    else:
-                        stock_parts.append(f"{variant}({qty})")
-                stock_str = " ".join(stock_parts)
+            # Condensed format: Name | Price | Stock
+            if status == 'out_of_stock' or qty == 0:
+                stock_str = "OUT OF STOCK"
             else:
-                qty = p.quantity or 0
-                if qty == 0:
-                    stock_str = "OUT OF STOCK"
-                else:
-                    stock_str = f"{qty} in stock"
+                stock_str = f"{qty} available"
 
-            status_note = ""
-            if p.status == "out_of_stock" or (p.quantity is not None and p.quantity == 0):
-                status_note = " [OUT OF STOCK]"
+            # Handle variants
+            variants = p.get('variants')
+            if variants and isinstance(variants, dict):
+                variant_parts = []
+                for variant, variant_qty in variants.items():
+                    if variant_qty == 0:
+                        variant_parts.append(f"{variant}(out)")
+                    else:
+                        variant_parts.append(f"{variant}({variant_qty})")
+                stock_str = " ".join(variant_parts)
 
-            lines.append(f"- {p.name}: {stock_str} - {price_str}{status_note}")
-            if p.description:
-                lines.append(f"  {p.description}")
+            line = f"- {p['name']} | ${price} TTD | {stock_str}"
+            if p.get('description'):
+                # Truncate description to save tokens
+                desc = p['description'][:80]
+                line += f" | {desc}"
+            lines.append(line)
 
     lines.append("\nINVENTORY RULES:")
-    lines.append("- NEVER offer items marked OUT OF STOCK. Suggest alternatives.")
-    lines.append("- Always quote prices as shown above.")
-    lines.append("- If asked about a product not in this list, say you'll check with the team and escalate.")
+    lines.append("- NEVER offer OUT OF STOCK items. Suggest alternatives.")
+    lines.append("- Always quote prices as shown. Currency is TTD.")
+    lines.append("- If asked about a product not listed, use check_stock() then escalate if not found.")
     lines.append("==========================================\n")
 
     return "\n".join(lines)
 
 
 # ============================================================
-# CUSTOMER CONTEXT (DYNAMIC — for returning customers)
+# CUSTOMER CONTEXT (for returning customers)
 # ============================================================
 
 def format_customer_context(
-    recent_messages: list[Message],
-    leads: list[Lead],
+    recent_messages: list,
+    leads: list,
 ) -> str:
-    """Build customer context from past interactions."""
     lines = ["\n\n=== CUSTOMER CONTEXT ==="]
     lines.append("This is a returning customer.")
 
     if leads:
-        lead = leads[0]  # Most recent lead record
+        lead = leads[0]
         if lead.name:
             lines.append(f"Name: {lead.name}")
         if lead.phone:
@@ -106,24 +155,43 @@ def format_customer_context(
 
 
 # ============================================================
-# AD CONTEXT (DYNAMIC — injected for CTWA ad clicks)
+# AD CONTEXT
 # ============================================================
 
 def get_ad_context_instructions() -> str:
     return """
-
 === AD CONTEXT ===
 This customer clicked a Click-to-WhatsApp ad.
 You have 72 hours of free messaging (no Meta fees).
 
-Behavior adjustments:
-- Be more proactive with product recommendations
-- After answering their question, suggest related items
-- Encourage them to place an order now
+Behavior:
+- Be proactive with product recommendations
+- If they provide name + address + phone → place_order() immediately
 - You can send promotional content freely in this window
-- If they mention the specific ad/product they saw, lead with that product
+- Lead with whatever product/offer they clicked on
 ================
 """
+
+
+# ============================================================
+# SHOULD INCLUDE PRODUCTS?
+# Skip product list for pure smalltalk to save tokens
+# ============================================================
+
+def _should_include_products(message_text: str, message_count: int) -> bool:
+    """Only skip products for pure smalltalk to save tokens."""
+    # Always include on first message
+    if message_count <= 1:
+        return True
+
+    # Skip for pure smalltalk
+    smalltalk = {'hi', 'hello', 'hey', 'thanks', 'thank you', 'ok',
+                 'okay', 'bye', 'goodbye', 'yes', 'no', 'k', 'lol'}
+    if message_text.lower().strip() in smalltalk:
+        return False
+
+    # Default: include (safer for accuracy)
+    return True
 
 
 # ============================================================
@@ -135,32 +203,34 @@ async def build_system_prompt(
     business_id: str,
     external_user_id: str,
     metadata: dict = None,
+    message_count: int = 1,
 ) -> str:
     """
     Dynamically assemble the full system prompt.
     Called on every incoming message.
-    """
-    # Load business
-    business = db.query(Business).filter(
-        Business.id == uuid.UUID(business_id)
-    ).first()
 
-    if not business:
+    Phase 6 changes:
+    - Uses BusinessCache + ProductCache (faster, less DB load)
+    - Adds TOOL_GUIDELINES section
+    - Condensed product format
+    - Conditional product inclusion
+    """
+    # Load business from cache
+    business_dict = BusinessCache.get(db, business_id)
+
+    if not business_dict:
         return "You are a helpful AI assistant."
 
-    # Start with static base prompt (identity, tone, FAQ, escalation, boundaries)
-    prompt = business.base_prompt or "You are a helpful AI assistant."
+    # Start with the business base_prompt
+    prompt = business_dict.get('base_prompt') or "You are a helpful AI assistant."
 
-    # Add live inventory from products table
-    products = (
-        db.query(Product)
-        .filter(
-            Product.business_id == uuid.UUID(business_id),
-            Product.status != "discontinued",
-        )
-        .all()
-    )
-    prompt += format_inventory_section(products)
+    # Add tool usage guidelines
+    prompt += TOOL_GUIDELINES
+
+    # Add live inventory (from cache)
+    if _should_include_products("", message_count):
+        products = ProductCache.get_products(db, business_id)
+        prompt += format_inventory_section(products)
 
     # Add customer context if returning customer
     past_convos = (
@@ -172,9 +242,8 @@ async def build_system_prompt(
         .all()
     )
 
-    if len(past_convos) > 1:  # They've been here before
-        # Get recent messages across past conversations
-        past_convo_ids = [c.id for c in past_convos[:-1]]  # Exclude current
+    if len(past_convos) > 1:
+        past_convo_ids = [c.id for c in past_convos[:-1]]
         recent_msgs = (
             db.query(Message)
             .filter(Message.conversation_id.in_(past_convo_ids))
@@ -183,7 +252,6 @@ async def build_system_prompt(
             .all()
         )
 
-        # Check for existing lead records
         leads = (
             db.query(Lead)
             .filter(Lead.business_id == uuid.UUID(business_id))
