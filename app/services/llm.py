@@ -59,13 +59,8 @@ async def select_model(
 ) -> str:
     """
     Select the appropriate model based on business tier and message content.
-    
-    Phase 6 Addition:
-    - If needs_tools=True and business is Ultra tier, prefer Claude (better tool use)
-    - Gemma handles tools but Claude is more reliable for complex tool chains
-    
-    Starter/Pro: Always Gemma (cheap/free)
-    Ultra/Custom: Claude for complex tasks OR tool calling
+    Starter/Pro: Always Gemma (free tier)
+    Ultra/Custom: Claude only for complex reasoning, Gemma for everything else
     """
     if db:
         business = db.query(Business).filter(
@@ -75,27 +70,23 @@ async def select_model(
         business = None
 
     tier = business.tier if business else "pro"
-    # Handle both enum and string
     tier_value = tier.value if hasattr(tier, 'value') else tier
 
-    # Starter/Pro: Always use Gemma (free tier)
+    # Starter/Pro: Always Gemma
     if tier_value in ("starter", "pro"):
         return MODEL_GEMMA
 
-    # Ultra/Custom: Route to Claude for complex scenarios
+    # Ultra/Custom: Claude only for images or complex reasoning
     if _has_image_indicator(message_text):
-        logger.info(f"Routing to Claude (image detected) for business={business_id[:8]}")
+        logger.info(f"Routing to Claude (image) for business={business_id[:8]}")
         return MODEL_CLAUDE
 
     if _needs_complex_reasoning(message_text):
-        logger.info(f"Routing to Claude (complex reasoning) for business={business_id[:8]}")
+        logger.info(f"Routing to Claude (complex) for business={business_id[:8]}")
         return MODEL_CLAUDE
-    
-    # Phase 6: Only use Claude for Ultra when genuinely complex reasoning needed
-    # Gemma handles tool calls fine for standard conversations
-    if tier_value in ("ultra", "custom") and _needs_complex_reasoning(message_text):
-        logger.info(f"Routing to Claude (complex reasoning) for business={business_id[:8]}")
-        return MODEL_CLAUDE
+
+    # Default: Gemma for everything else (including tool calls)
+    return MODEL_GEMMA
 
 
 # ============================================================
