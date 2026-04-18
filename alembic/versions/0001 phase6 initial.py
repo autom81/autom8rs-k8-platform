@@ -346,7 +346,20 @@ def upgrade() -> None:
             brand_voice = 'Friendly and efficient. Trinidad-aware: knows local geography, delivery zones, and casual vs professional tone. Uses clear, warm language without being pushy. Understands that customers often want to order quickly, not chat extensively.'
         WHERE id = 'd510b8d0-9316-4e34-8edb-bc07a7de7568'
     """)
+        # Product URL for website links
+        op.add_column('products',
+            sa.Column('product_url', sa.String(), nullable=True)
+        )
 
+        # Integration config for external inventory sync (WooCommerce etc.)
+        op.add_column('businesses',
+            sa.Column('integration_config', postgresql.JSONB(astext_type=sa.Text()), nullable=True)
+        )
+
+        # Website URL
+        op.add_column('businesses',
+            sa.Column('website_url', sa.String(), nullable=True)
+        )
 
 def downgrade() -> None:
     """Reverse Phase 6 schema changes."""
@@ -395,6 +408,9 @@ def downgrade() -> None:
     op.drop_column('businesses', 'category')
     op.drop_column('businesses', 'order_prefix')
     op.drop_column('businesses', 'features')
+    op.drop_column('businesses', 'website_url')
+    op.drop_column('businesses', 'integration_config')
+    op.drop_column('products', 'product_url')
     
     # Drop enums
     op.execute("DROP TYPE IF EXISTS mediastatusenum")

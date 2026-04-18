@@ -79,6 +79,15 @@ class Business(Base):
     
     # Custom brand voice/personality for system prompt
     brand_voice = Column(Text, nullable=True)
+
+    # Integration config for external inventory sync
+    # Examples: WooCommerce API keys, sync intervals, last sync time
+    # {"type": "woocommerce", "store_url": "...", "consumer_key": "...", 
+    #  "consumer_secret": "...", "sync_interval_minutes": 15, "last_synced": null}
+    integration_config = Column(JSONB, nullable=True)
+    
+    # Website URL for directing customers to website
+    website_url = Column(String, nullable=True)
     
     # ========== END PHASE 6 ADDITIONS ==========
     
@@ -98,6 +107,10 @@ class Product(Base):
     variants = Column(JSONB, nullable=True)
     quantity = Column(Integer)
     status = Column(SAEnum(ProductStatusEnum))
+    
+    # Direct link to product page on business website
+    # Used when bot directs customer to purchase online
+    product_url = Column(String, nullable=True)
     
     # ========== PHASE 6 ADDITIONS ==========
     
