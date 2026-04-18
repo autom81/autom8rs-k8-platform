@@ -34,7 +34,8 @@ class Conversation(Base):
     escalation_reason = Column(Text, nullable=True)
     source = Column(String(50))
     started_at = Column(DateTime(timezone=True), server_default=func.now())
-    last_message_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    last_message_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    message_count = Column(Integer, nullable=True, default=0)
 
 class Message(Base):
     __tablename__ = "messages"
