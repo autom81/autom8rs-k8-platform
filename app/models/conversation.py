@@ -1,6 +1,6 @@
 import uuid
 import enum
-from sqlalchemy import Column, String, Text, Boolean, ForeignKey, DateTime
+from sqlalchemy import Column, String, Text, Boolean, ForeignKey, DateTime, Integer
 from sqlalchemy.sql import func
 from sqlalchemy import Uuid, Enum as SAEnum
 from app.database import Base
