@@ -53,8 +53,12 @@ from app.models.media import (
     MediaStatusEnum,
     SourcePlatformEnum,
 )
- 
- 
+
+# Phase 7: Dashboard models
+from app.models.user import User
+from app.models.broadcast import BroadcastTemplate, Broadcast, BroadcastRecipient
+
+
 __all__ = [
     # Business
     "Business",
@@ -89,5 +93,11 @@ __all__ = [
     "MediaTypeEnum",
     "MediaStatusEnum",
     "SourcePlatformEnum",
+
+    # Phase 7
+    "User",
+    "BroadcastTemplate",
+    "Broadcast",
+    "BroadcastRecipient",
 ]
  

@@ -13,6 +13,7 @@ from sqlalchemy import Column, String, Text, Integer, Boolean, ForeignKey, DateT
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
 from sqlalchemy import Uuid, Enum as SAEnum
+from sqlalchemy.orm import relationship
 from app.database import Base
  
  
@@ -90,8 +91,11 @@ class Business(Base):
     website_url = Column(String, nullable=True)
     
     # ========== END PHASE 6 ADDITIONS ==========
-    
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Phase 7: dashboard users for this business
+    users = relationship("User", back_populates="business")
  
  
 class Product(Base):

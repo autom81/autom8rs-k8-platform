@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRY_HOURS: int = 24
 
+    # Admin — business_id of the autom8rs master account
+    # Set this in .env so only the platform owner can reach /admin/* routes
+    AUTOM8RS_MASTER_BUSINESS_ID: str = ""
+
     class Config:
         env_file = ".env"
 

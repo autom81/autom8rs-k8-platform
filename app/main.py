@@ -25,6 +25,10 @@ import app.models  # Forces Python to read all schema files
  
 from app.routes.webhooks import router as webhooks_router
 from app.routes.admin import router as admin_router
+from app.routes.auth import router as auth_router
+from app.routes.dashboard import router as dashboard_router
+from app.routes.analytics import router as analytics_router
+from app.routes.settings import router as settings_router
  
 # Configure logging
 logging.basicConfig(
@@ -93,6 +97,10 @@ app = FastAPI(title="K8 Agent Platform", version="0.2.0")  # Bumped for Phase 6
 # Register routes
 app.include_router(webhooks_router)
 app.include_router(admin_router)
+app.include_router(auth_router)
+app.include_router(dashboard_router)
+app.include_router(analytics_router)
+app.include_router(settings_router)
  
  
 # ============================================================
