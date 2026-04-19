@@ -1,7 +1,7 @@
 """
 Auth Service
 ============
-Password hashing (bcrypt via passlib) and JWT creation/validation (python-jose).
+Password hashing (bcrypt directly) and JWT creation/validation (python-jose).
 
 JWT payload shape matches what the Next.js dashboard expects:
   user_id, business_id, email, full_name, business_name,
@@ -10,8 +10,8 @@ JWT payload shape matches what the Next.js dashboard expects:
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Optional
 
+import bcrypt
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 
 from app.config import settings
 
@@ -21,15 +21,12 @@ if TYPE_CHECKING:
 
 # ── Password hashing ──────────────────────────────────────────────
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
 
 
 # ── JWT ───────────────────────────────────────────────────────────
