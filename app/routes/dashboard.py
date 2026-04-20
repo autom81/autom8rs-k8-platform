@@ -110,7 +110,8 @@ def _serialize_lead(lead: Lead) -> dict:
 
 
 def _serialize_conversation(conv: Conversation, lead: Optional[Lead] = None,
-                             last_message: Optional[Message] = None) -> dict:
+                             last_message: Optional[Message] = None,
+                             has_order: bool = False) -> dict:
     return {
         "id": str(conv.id),
         "external_user_id": conv.external_user_id,
@@ -123,6 +124,7 @@ def _serialize_conversation(conv: Conversation, lead: Optional[Lead] = None,
         "lead": _serialize_lead(lead) if lead else None,
         "last_message_preview": (last_message.content or "")[:120] if last_message else None,
         "last_message_role": (last_message.role.value if hasattr(last_message.role, "value") else last_message.role) if last_message else None,
+        "has_order": has_order,
     }
 
 
@@ -261,8 +263,17 @@ def list_conversations(
         ):
             last_msgs[msg.conversation_id] = msg
 
+    # Bulk-fetch which conversations have orders
+    orders_conv_ids: set[uuid.UUID] = set()
+    if conv_ids:
+        for row in db.query(Order.conversation_id).filter(
+            Order.conversation_id.in_(conv_ids)
+        ).distinct().all():
+            if row.conversation_id:
+                orders_conv_ids.add(row.conversation_id)
+
     items = [
-        _serialize_conversation(c, leads_by_conv.get(c.id), last_msgs.get(c.id))
+        _serialize_conversation(c, leads_by_conv.get(c.id), last_msgs.get(c.id), c.id in orders_conv_ids)
         for c in convs
     ]
 

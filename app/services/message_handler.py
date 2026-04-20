@@ -66,6 +66,26 @@ def get_or_create_conversation(
         db.commit()
         return convo
 
+    # Reopen the most recent resolved/closed conversation instead of creating a new one.
+    # This keeps chat history in one continuous thread per contact.
+    resolved_convo = (
+        db.query(Conversation)
+        .filter(
+            Conversation.business_id == uuid.UUID(business_id),
+            Conversation.external_user_id == external_user_id,
+            Conversation.channel == channel,
+            Conversation.status.in_(["resolved", "closed"]),
+        )
+        .order_by(Conversation.last_message_at.desc())
+        .first()
+    )
+
+    if resolved_convo:
+        resolved_convo.status = "active"
+        resolved_convo.last_message_at = datetime.now(timezone.utc)
+        db.commit()
+        return resolved_convo
+
     source = "organic"
     if metadata and metadata.get("source") == "ctwa_ad":
         source = "ctwa_ad"

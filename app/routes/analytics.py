@@ -101,6 +101,7 @@ def _fill_chart(raw_rows, date_key: str, days: int, *value_keys: str) -> list[di
 
 @router.get("/overview")
 def analytics_overview(
+    days: int = Query(30, ge=1, le=365),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
@@ -108,6 +109,8 @@ def analytics_overview(
     today = _today_start()
     month = _month_start()
     thirty_days_ago = _days_ago(30)
+    since = _days_ago(days)
+    prev_since = _days_ago(days * 2)
 
     # ── Today counts ─────────────────────────────────────────────
 
@@ -264,6 +267,71 @@ def analytics_overview(
         for c in recent_esc_rows
     ]
 
+    # ── Reports: comparison-period counts ─────────────────────────
+    conv_current = db.query(func.count(Conversation.id)).filter(
+        Conversation.business_id == biz_id,
+        Conversation.started_at >= since,
+    ).scalar() or 0
+
+    conv_prev = db.query(func.count(Conversation.id)).filter(
+        Conversation.business_id == biz_id,
+        Conversation.started_at >= prev_since,
+        Conversation.started_at < since,
+    ).scalar() or 0
+
+    orders_current = db.query(func.count(Order.id)).filter(
+        Order.business_id == biz_id,
+        Order.created_at >= since,
+        Order.status != OrderStatusEnum.cancelled,
+    ).scalar() or 0
+
+    orders_prev = db.query(func.count(Order.id)).filter(
+        Order.business_id == biz_id,
+        Order.created_at >= prev_since,
+        Order.created_at < since,
+        Order.status != OrderStatusEnum.cancelled,
+    ).scalar() or 0
+
+    revenue_current = _flt(db.query(func.sum(Order.total)).filter(
+        Order.business_id == biz_id,
+        Order.created_at >= since,
+        Order.status != OrderStatusEnum.cancelled,
+    ).scalar())
+
+    revenue_prev = _flt(db.query(func.sum(Order.total)).filter(
+        Order.business_id == biz_id,
+        Order.created_at >= prev_since,
+        Order.created_at < since,
+        Order.status != OrderStatusEnum.cancelled,
+    ).scalar())
+
+    total_leads_current = db.query(func.count(Lead.id)).filter(
+        Lead.business_id == biz_id,
+        Lead.created_at >= since,
+    ).scalar() or 0
+
+    converted_leads_current = db.query(func.count(Lead.id)).filter(
+        Lead.business_id == biz_id,
+        Lead.created_at >= since,
+        Lead.status == LeadStatusEnum.converted,
+    ).scalar() or 0
+
+    total_leads_prev = db.query(func.count(Lead.id)).filter(
+        Lead.business_id == biz_id,
+        Lead.created_at >= prev_since,
+        Lead.created_at < since,
+    ).scalar() or 0
+
+    converted_leads_prev = db.query(func.count(Lead.id)).filter(
+        Lead.business_id == biz_id,
+        Lead.created_at >= prev_since,
+        Lead.created_at < since,
+        Lead.status == LeadStatusEnum.converted,
+    ).scalar() or 0
+
+    lcr_current = round(converted_leads_current / total_leads_current * 100, 1) if total_leads_current else 0.0
+    lcr_prev = round(converted_leads_prev / total_leads_prev * 100, 1) if total_leads_prev else 0.0
+
     return {
         # Today
         "conversations_today": conversations_today,
@@ -287,6 +355,27 @@ def analytics_overview(
             "revenue_ttd": _flt(revenue_this_month),
             "orders_placed": orders_this_month,
             "avg_response_time_minutes": round(avg_response_time_seconds / 60, 2),
+        },
+        # Reports-page shape: current period vs previous period
+        "conversations": {
+            "current": conv_current,
+            "previous": conv_prev,
+            "trend_pct": _trend_pct(conv_current, conv_prev) or 0.0,
+        },
+        "orders": {
+            "current": orders_current,
+            "previous": orders_prev,
+            "trend_pct": _trend_pct(orders_current, orders_prev) or 0.0,
+        },
+        "revenue": {
+            "current": revenue_current,
+            "previous": revenue_prev,
+            "trend_pct": _trend_pct(revenue_current, revenue_prev) or 0.0,
+        },
+        "lead_conversion_rate": {
+            "current": lcr_current,
+            "previous": lcr_prev,
+            "trend_pct": _trend_pct(lcr_current, lcr_prev) or 0.0,
         },
     }
 
@@ -326,6 +415,7 @@ def analytics_conversations(
 
     return {
         "chart": chart,
+        "data": chart,
         "total": int(total),
         "previous_period_total": int(prev_total),
         "trend_pct": _trend_pct(total, prev_total),
@@ -351,6 +441,53 @@ _SIDE_STAGES = [
     LeadStatusEnum.unqualified,
     LeadStatusEnum.lost,
 ]
+
+
+_FUNNEL_LABELS = {
+    "new": "New Lead",
+    "attempted_contact": "Contacted",
+    "connected": "Connected",
+    "qualified": "Qualified",
+    "converted": "Converted",
+}
+
+
+@router.get("/leads/funnel")
+def analytics_leads_funnel(
+    days: int = Query(30, ge=1, le=365),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    biz_id = _biz_uuid(current_user)
+    since = _days_ago(days)
+
+    rows = (
+        db.query(Lead.status, func.count(Lead.id).label("count"))
+        .filter(Lead.business_id == biz_id, Lead.created_at >= since)
+        .group_by(Lead.status)
+        .all()
+    )
+    counts: dict[str, int] = {
+        (r.status.value if hasattr(r.status, "value") else r.status): r.count
+        for r in rows
+    }
+
+    top_count = counts.get("new", 0) or 1
+    stages = []
+    for i, stage in enumerate(_FUNNEL_STAGES):
+        stage_val = stage.value
+        count = counts.get(stage_val, 0)
+        prev_count = counts.get(_FUNNEL_STAGES[i - 1].value, 0) if i > 0 else count
+        stages.append({
+            "stage": stage_val,
+            "label": _FUNNEL_LABELS.get(stage_val, stage_val.replace("_", " ").title()),
+            "count": count,
+            "conversion_rate": round(count / top_count * 100, 1) if top_count else 0.0,
+            "avg_days_in_stage": 0,
+            "drop_off_rate": round((prev_count - count) / prev_count * 100, 1) if prev_count and i > 0 else 0.0,
+        })
+
+    return {"stages": stages}
 
 
 @router.get("/leads")
@@ -485,6 +622,7 @@ def analytics_orders(
 
     return {
         "chart": chart,
+        "data": chart,
         "total_orders": total_orders,
         "total_revenue": total_revenue,
         "previous_period_revenue": _flt(prev_revenue),
@@ -546,10 +684,22 @@ def analytics_heatmap(
 
     peak = max(heatmap, key=lambda x: x["count"]) if heatmap else None
 
+    # Build 2D grid [day_of_week 0-6][hour 0-23] for frontend HeatmapGrid component
+    _DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    grid_lookup: dict[tuple[int, int], int] = {(e["day_of_week"], e["hour"]): e["count"] for e in heatmap}
+    grid = [
+        [grid_lookup.get((dow, h), 0) for h in range(24)]
+        for dow in range(7)
+    ]
+    max_value = max((max(row) for row in grid if row), default=0)
+
     return {
         "heatmap": heatmap,
         "peak": peak,
         "days_sampled": days,
+        "grid": grid,
+        "max_value": max_value,
+        "days": _DAY_LABELS,
     }
 
 
