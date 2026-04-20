@@ -29,6 +29,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+
+def _preflight_response() -> Response:
+    """Return a bare 200 for OPTIONS preflight — CORSMiddleware adds the headers."""
+    return Response(status_code=200)
+
 # ── Cookie helpers ────────────────────────────────────────────────
 
 COOKIE_NAME = "autom8rs_session"
@@ -122,6 +127,11 @@ def _user_response(user: User, business: Business) -> dict:
 
 # ── POST /auth/login ──────────────────────────────────────────────
 
+@router.options("/login", include_in_schema=False)
+def options_login():
+    return _preflight_response()
+
+
 @router.post("/login")
 def login(
     body: LoginRequest,
@@ -167,6 +177,11 @@ def login(
 
 # ── POST /auth/logout ─────────────────────────────────────────────
 
+@router.options("/logout", include_in_schema=False)
+def options_logout():
+    return _preflight_response()
+
+
 @router.post("/logout")
 def logout(response: Response):
     """Clear the session cookie."""
@@ -175,6 +190,11 @@ def logout(response: Response):
 
 
 # ── GET /auth/me ──────────────────────────────────────────────────
+
+@router.options("/me", include_in_schema=False)
+def options_me():
+    return _preflight_response()
+
 
 @router.get("/me", response_model=UserResponse)
 def me(
@@ -190,6 +210,11 @@ def me(
 
 
 # ── POST /auth/refresh ────────────────────────────────────────────
+
+@router.options("/refresh", include_in_schema=False)
+def options_refresh():
+    return _preflight_response()
+
 
 @router.post("/refresh")
 def refresh(
