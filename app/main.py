@@ -106,8 +106,10 @@ app.add_middleware(
         "https://dashboard.autom8rs.com",
     ],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "Accept", "Cookie", "X-Requested-With"],
+    expose_headers=["Set-Cookie"],
+    max_age=3600,
 )
 
 # Register routes
