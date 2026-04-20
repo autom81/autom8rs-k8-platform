@@ -156,7 +156,9 @@ def _serialize_order(o: Order) -> dict:
         "status": o.status.value if o.status and hasattr(o.status, "value") else o.status,
         "special_instructions": o.special_instructions,
         "created_at": _dt(o.created_at),
+        "confirmed_at": _dt(getattr(o, 'confirmed_at', None)),
         "shipped_at": _dt(o.shipped_at),
+        "delivered_at": _dt(getattr(o, 'delivered_at', None)),
     }
 
 
