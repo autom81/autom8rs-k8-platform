@@ -17,6 +17,7 @@ import subprocess
 import os
  
 from fastapi import FastAPI, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import text
  
@@ -93,7 +94,22 @@ def run_migrations():
 run_migrations()
  
 app = FastAPI(title="K8 Agent Platform", version="0.2.0")  # Bumped for Phase 6
- 
+
+# ============================================================
+# CORS
+# allow_credentials=True is required for the httpOnly JWT cookie
+# ============================================================
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://dashboard.autom8rs.com",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Register routes
 app.include_router(webhooks_router)
 app.include_router(admin_router)
