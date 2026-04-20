@@ -36,6 +36,7 @@ class Conversation(Base):
     started_at = Column(DateTime(timezone=True), server_default=func.now())
     last_message_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     message_count = Column(Integer, nullable=True, default=0)
+    pinned = Column(Boolean, default=False, nullable=True)
 
 class Message(Base):
     __tablename__ = "messages"

@@ -125,6 +125,7 @@ def _serialize_conversation(conv: Conversation, lead: Optional[Lead] = None,
         "last_message_preview": (last_message.content or "")[:120] if last_message else None,
         "last_message_role": (last_message.role.value if hasattr(last_message.role, "value") else last_message.role) if last_message else None,
         "has_order": has_order,
+        "pinned": bool(conv.pinned) if conv.pinned is not None else False,
     }
 
 
@@ -432,6 +433,107 @@ def reopen_conversation(
     conv.status = ConvoStatusEnum.active
     db.commit()
     return {"status": "ok", "conversation_id": conversation_id, "new_status": "active"}
+
+
+@router.post("/conversations/{conversation_id}/mark-spam")
+def mark_conversation_spam(
+    conversation_id: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    business_id = _business_uuid(current_user)
+    try:
+        cid = uuid.UUID(conversation_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid conversation ID")
+
+    conv = db.query(Conversation).filter(
+        Conversation.id == cid,
+        Conversation.business_id == business_id,
+    ).first()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    conv.status = ConvoStatusEnum.closed
+    lead = db.query(Lead).filter(Lead.conversation_id == cid).first()
+    if lead:
+        lead.classification = LeadClassificationEnum.spam
+    db.commit()
+    return {"status": "ok", "conversation_id": conversation_id}
+
+
+@router.post("/conversations/{conversation_id}/pin")
+def pin_conversation(
+    conversation_id: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    business_id = _business_uuid(current_user)
+    try:
+        cid = uuid.UUID(conversation_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid conversation ID")
+
+    conv = db.query(Conversation).filter(
+        Conversation.id == cid,
+        Conversation.business_id == business_id,
+    ).first()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    conv.pinned = True
+    db.commit()
+    return {"status": "ok", "pinned": True}
+
+
+@router.post("/conversations/{conversation_id}/unpin")
+def unpin_conversation(
+    conversation_id: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    business_id = _business_uuid(current_user)
+    try:
+        cid = uuid.UUID(conversation_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid conversation ID")
+
+    conv = db.query(Conversation).filter(
+        Conversation.id == cid,
+        Conversation.business_id == business_id,
+    ).first()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    conv.pinned = False
+    db.commit()
+    return {"status": "ok", "pinned": False}
+
+
+@router.delete("/conversations/{conversation_id}")
+def delete_conversation(
+    conversation_id: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    business_id = _business_uuid(current_user)
+    try:
+        cid = uuid.UUID(conversation_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid conversation ID")
+
+    conv = db.query(Conversation).filter(
+        Conversation.id == cid,
+        Conversation.business_id == business_id,
+    ).first()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    db.query(Message).filter(Message.conversation_id == cid).delete()
+    db.query(Lead).filter(Lead.conversation_id == cid).delete()
+    db.delete(conv)
+    db.commit()
+    return {"status": "deleted", "conversation_id": conversation_id}
 
 
 # ═══════════════════════════════════════════════════════════════════
