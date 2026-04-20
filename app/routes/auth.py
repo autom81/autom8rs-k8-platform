@@ -47,13 +47,14 @@ def _set_session_cookie(response: Response, token: str) -> None:
         httponly=True,
         samesite="lax",
         max_age=COOKIE_MAX_AGE,
-        secure=True,   # HTTPS only — set COOKIE_SECURE=false in .env for local dev if needed
+        secure=True,
         path="/",
+        domain=".autom8rs.com",  # shared across api. and dashboard. subdomains
     )
 
 
 def _clear_session_cookie(response: Response) -> None:
-    response.delete_cookie(key=COOKIE_NAME, path="/", samesite="lax")
+    response.delete_cookie(key=COOKIE_NAME, path="/", samesite="lax", domain=".autom8rs.com")
 
 
 # ── Pydantic schemas ──────────────────────────────────────────────
