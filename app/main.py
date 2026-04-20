@@ -16,8 +16,10 @@ import logging
 import subprocess
 import os
  
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response as FastAPIResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import text
  
@@ -97,14 +99,42 @@ app = FastAPI(title="K8 Agent Platform", version="0.2.0")  # Bumped for Phase 6
 
 # ============================================================
 # CORS
-# allow_credentials=True is required for the httpOnly JWT cookie
+# CORSMiddleware is the inner layer; ExplicitCORSMiddleware is
+# added last so it becomes the outermost layer and intercepts
+# preflight before anything else can return a response without headers.
 # ============================================================
 
+_ALLOWED_ORIGIN = "https://dashboard.autom8rs.com"
+_CORS_HEADERS = {
+    "Access-Control-Allow-Origin": _ALLOWED_ORIGIN,
+    "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept, Cookie, X-Requested-With",
+    "Access-Control-Allow-Credentials": "true",
+    "Access-Control-Max-Age": "3600",
+    "Access-Control-Expose-Headers": "Set-Cookie",
+}
+
+
+class ExplicitCORSMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        origin = request.headers.get("origin", "")
+
+        if request.method == "OPTIONS" and origin == _ALLOWED_ORIGIN:
+            return FastAPIResponse(status_code=200, headers=_CORS_HEADERS)
+
+        response = await call_next(request)
+
+        if origin == _ALLOWED_ORIGIN:
+            for key, value in _CORS_HEADERS.items():
+                response.headers[key] = value
+
+        return response
+
+
+# Inner layer — standard CORS handling
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://dashboard.autom8rs.com",
-    ],
+    allow_origins=[_ALLOWED_ORIGIN],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization", "Accept", "Cookie", "X-Requested-With"],
@@ -112,10 +142,10 @@ app.add_middleware(
     max_age=3600,
 )
 
-# Catch-all OPTIONS handler — ensures preflight never returns 405 regardless of route
-from fastapi import Request
-from fastapi.responses import Response as FastAPIResponse
+# Outer layer — added last so it runs first, guarantees CORS headers on every response
+app.add_middleware(ExplicitCORSMiddleware)
 
+# Catch-all OPTIONS handler so no preflight ever hits a 405 at the router level
 @app.options("/{rest_of_path:path}")
 async def preflight_handler(rest_of_path: str, request: Request):
     return FastAPIResponse(status_code=200)
