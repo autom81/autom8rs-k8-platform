@@ -112,6 +112,14 @@ app.add_middleware(
     max_age=3600,
 )
 
+# Catch-all OPTIONS handler — ensures preflight never returns 405 regardless of route
+from fastapi import Request
+from fastapi.responses import Response as FastAPIResponse
+
+@app.options("/{rest_of_path:path}")
+async def preflight_handler(rest_of_path: str, request: Request):
+    return FastAPIResponse(status_code=200)
+
 # Register routes
 app.include_router(webhooks_router)
 app.include_router(admin_router)
