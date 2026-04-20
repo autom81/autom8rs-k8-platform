@@ -125,7 +125,7 @@ def _serialize_conversation(conv: Conversation, lead: Optional[Lead] = None,
         "last_message_preview": (last_message.content or "")[:120] if last_message else None,
         "last_message_role": (last_message.role.value if hasattr(last_message.role, "value") else last_message.role) if last_message else None,
         "has_order": has_order,
-        "pinned": bool(conv.pinned) if conv.pinned is not None else False,
+        "pinned": bool(getattr(conv, 'pinned', False) or False),
     }
 
 
