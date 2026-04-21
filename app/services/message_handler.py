@@ -239,11 +239,17 @@ async def handle_message(
             db, business_id, external_user_id, channel, message_metadata
         )
 
-        # 3. If escalated, save message but don't auto-reply
+        # 3. If escalated or manually taken over, save message but don't auto-reply
         if conversation.status == ConvoStatusEnum.escalated:
             save_message(db, conversation.id, "user", message_text,
                         media_url=media_url, media_type=media_type)
             logger.info(f"Conversation {conversation.id} escalated — skipping auto-reply")
+            return
+
+        if getattr(conversation, 'bot_paused', False):
+            save_message(db, conversation.id, "user", message_text,
+                        media_url=media_url, media_type=media_type)
+            logger.info(f"Conversation {conversation.id} bot paused — skipping auto-reply")
             return
 
         # 4. Handle voice notes via Whisper

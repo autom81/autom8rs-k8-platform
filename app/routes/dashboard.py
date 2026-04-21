@@ -126,6 +126,7 @@ def _serialize_conversation(conv: Conversation, lead: Optional[Lead] = None,
         "last_message_role": (last_message.role.value if hasattr(last_message.role, "value") else last_message.role) if last_message else None,
         "has_order": has_order,
         "pinned": bool(getattr(conv, 'pinned', False) or False),
+        "bot_paused": bool(getattr(conv, 'bot_paused', False) or False),
     }
 
 
@@ -510,6 +511,54 @@ def unpin_conversation(
     conv.pinned = False
     db.commit()
     return {"status": "ok", "pinned": False}
+
+
+@router.post("/conversations/{conversation_id}/pause-bot")
+def pause_bot(
+    conversation_id: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    business_id = _business_uuid(current_user)
+    try:
+        cid = uuid.UUID(conversation_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid conversation ID")
+
+    conv = db.query(Conversation).filter(
+        Conversation.id == cid,
+        Conversation.business_id == business_id,
+    ).first()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    conv.bot_paused = True
+    db.commit()
+    return {"status": "ok", "bot_paused": True}
+
+
+@router.post("/conversations/{conversation_id}/resume-bot")
+def resume_bot(
+    conversation_id: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    business_id = _business_uuid(current_user)
+    try:
+        cid = uuid.UUID(conversation_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid conversation ID")
+
+    conv = db.query(Conversation).filter(
+        Conversation.id == cid,
+        Conversation.business_id == business_id,
+    ).first()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    conv.bot_paused = False
+    db.commit()
+    return {"status": "ok", "bot_paused": False}
 
 
 @router.delete("/conversations/{conversation_id}")

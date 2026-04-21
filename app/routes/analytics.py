@@ -746,6 +746,146 @@ def analytics_channels(
 
 
 # ═══════════════════════════════════════════════════════════════════
+# GET /api/analytics/bot-performance
+# ═══════════════════════════════════════════════════════════════════
+
+@router.get("/bot-performance")
+def analytics_bot_performance(
+    days: int = Query(30, ge=1, le=365),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    biz_id = _biz_uuid(current_user)
+    since = _days_ago(days)
+    prev_since = _days_ago(days * 2)
+
+    # ── Current period ────────────────────────────────────────────
+    total_convs = db.query(func.count(Conversation.id)).filter(
+        Conversation.business_id == biz_id,
+        Conversation.started_at >= since,
+    ).scalar() or 0
+
+    escalated_convs = db.query(func.count(Conversation.id)).filter(
+        Conversation.business_id == biz_id,
+        Conversation.started_at >= since,
+        Conversation.status == ConvoStatusEnum.escalated,
+    ).scalar() or 0
+
+    resolved_convs = db.query(func.count(Conversation.id)).filter(
+        Conversation.business_id == biz_id,
+        Conversation.started_at >= since,
+        Conversation.status == ConvoStatusEnum.resolved,
+    ).scalar() or 0
+
+    orders_placed = db.query(func.count(Order.id)).filter(
+        Order.business_id == biz_id,
+        Order.created_at >= since,
+        Order.status != OrderStatusEnum.cancelled,
+    ).scalar() or 0
+
+    # ── Previous period ───────────────────────────────────────────
+    prev_total = db.query(func.count(Conversation.id)).filter(
+        Conversation.business_id == biz_id,
+        Conversation.started_at >= prev_since,
+        Conversation.started_at < since,
+    ).scalar() or 0
+
+    prev_escalated = db.query(func.count(Conversation.id)).filter(
+        Conversation.business_id == biz_id,
+        Conversation.started_at >= prev_since,
+        Conversation.started_at < since,
+        Conversation.status == ConvoStatusEnum.escalated,
+    ).scalar() or 0
+
+    prev_resolved = db.query(func.count(Conversation.id)).filter(
+        Conversation.business_id == biz_id,
+        Conversation.started_at >= prev_since,
+        Conversation.started_at < since,
+        Conversation.status == ConvoStatusEnum.resolved,
+    ).scalar() or 0
+
+    prev_orders = db.query(func.count(Order.id)).filter(
+        Order.business_id == biz_id,
+        Order.created_at >= prev_since,
+        Order.created_at < since,
+        Order.status != OrderStatusEnum.cancelled,
+    ).scalar() or 0
+
+    # ── Avg response time (this period) ──────────────────────────
+    convs_for_rt = db.query(
+        Conversation.started_at,
+        Conversation.last_message_at,
+        Conversation.message_count,
+    ).filter(
+        Conversation.business_id == biz_id,
+        Conversation.started_at >= since,
+        Conversation.message_count > 1,
+        Conversation.last_message_at.isnot(None),
+    ).limit(500).all()
+
+    avg_response_seconds = 0.0
+    if convs_for_rt:
+        gaps = []
+        for row in convs_for_rt:
+            started, last, count = row.started_at, row.last_message_at, row.message_count or 2
+            if last and started and last > started:
+                gaps.append((last - started).total_seconds() / (count - 1))
+        if gaps:
+            avg_response_seconds = round(sum(gaps) / len(gaps), 1)
+
+    prev_convs_for_rt = db.query(
+        Conversation.started_at,
+        Conversation.last_message_at,
+        Conversation.message_count,
+    ).filter(
+        Conversation.business_id == biz_id,
+        Conversation.started_at >= prev_since,
+        Conversation.started_at < since,
+        Conversation.message_count > 1,
+        Conversation.last_message_at.isnot(None),
+    ).limit(500).all()
+
+    prev_response_seconds = 0.0
+    if prev_convs_for_rt:
+        gaps = []
+        for row in prev_convs_for_rt:
+            started, last, count = row.started_at, row.last_message_at, row.message_count or 2
+            if last and started and last > started:
+                gaps.append((last - started).total_seconds() / (count - 1))
+        if gaps:
+            prev_response_seconds = round(sum(gaps) / len(gaps), 1)
+
+    # ── Derived rates ─────────────────────────────────────────────
+    def _rate(part, total):
+        return round(part / total * 100, 1) if total else 0.0
+
+    bot_handled = total_convs - escalated_convs
+    prev_bot_handled = prev_total - prev_escalated
+
+    return {
+        "period_days": days,
+        "total_conversations": total_convs,
+        "bot_handled": bot_handled,
+        "bot_handle_rate": _rate(bot_handled, total_convs),
+        "escalation_count": escalated_convs,
+        "escalation_rate": _rate(escalated_convs, total_convs),
+        "resolution_count": resolved_convs,
+        "resolution_rate": _rate(resolved_convs, total_convs),
+        "orders_closed": orders_placed,
+        "avg_response_seconds": avg_response_seconds,
+        "avg_response_minutes": round(avg_response_seconds / 60, 1) if avg_response_seconds else 0.0,
+        # Trends vs previous period
+        "trends": {
+            "bot_handle_rate": _trend_pct(_rate(bot_handled, total_convs), _rate(prev_bot_handled, prev_total)),
+            "escalation_rate": _trend_pct(_rate(escalated_convs, total_convs), _rate(prev_escalated, prev_total)),
+            "resolution_rate": _trend_pct(_rate(resolved_convs, total_convs), _rate(prev_resolved, prev_total)),
+            "orders_closed": _trend_pct(orders_placed, prev_orders),
+            "avg_response_seconds": _trend_pct(avg_response_seconds, prev_response_seconds),
+        },
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════
 # INTERNAL UTIL
 # ═══════════════════════════════════════════════════════════════════
 
