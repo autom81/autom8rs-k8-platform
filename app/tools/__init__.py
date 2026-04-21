@@ -18,7 +18,7 @@ Usage:
     result = await TOOL_EXECUTORS['place_order'](db, conversation, **args)
 """
 
-from app.tools.lead_capture import capture_lead, update_lead_status, update_customer_info
+from app.tools.lead_capture import capture_lead, update_lead_status, update_customer_info, update_order_address
 from app.tools.escalation import escalate_to_human
 from app.tools.ordering import (
     check_stock,
@@ -39,6 +39,7 @@ TOOL_EXECUTORS = {
     # Lead management
     "update_lead_status": update_lead_status,
     "update_customer_info": update_customer_info,
+    "update_order_address": update_order_address,
     
     # Escalation
     "escalate_to_human": escalate_to_human,
@@ -67,6 +68,7 @@ __all__ = [
     "capture_lead",
     "update_lead_status",
     "update_customer_info",
+    "update_order_address",
     "escalate_to_human",
     "check_stock",
     "calculate_total",

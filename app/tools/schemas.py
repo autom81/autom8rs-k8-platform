@@ -87,6 +87,37 @@ UPDATE_CUSTOMER_INFO_TOOL = {
 
 
 # ============================================================
+# UPDATE ORDER ADDRESS TOOL
+# ============================================================
+
+UPDATE_ORDER_ADDRESS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "update_order_address",
+        "description": (
+            "Update the delivery address on an existing order. "
+            "Call this when a customer wants to change where their order is delivered. "
+            "Only works on pending, confirmed, or paid orders — cannot change address after shipping."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "order_number": {
+                    "type": "string",
+                    "description": "The order number to update (e.g. TPT-260418-001)"
+                },
+                "new_address": {
+                    "type": "string",
+                    "description": "The new full delivery address"
+                },
+            },
+            "required": ["order_number", "new_address"]
+        }
+    }
+}
+
+
+# ============================================================
 # ESCALATION TOOL
 # ============================================================
 
@@ -378,6 +409,7 @@ SEND_PRODUCT_MEDIA_TOOL = {
 ALL_TOOLS = {
     "update_lead_status": UPDATE_LEAD_STATUS_TOOL,
     "update_customer_info": UPDATE_CUSTOMER_INFO_TOOL,
+    "update_order_address": UPDATE_ORDER_ADDRESS_TOOL,
     "escalate_to_human": ESCALATE_TO_HUMAN_TOOL,
     "check_stock": CHECK_STOCK_TOOL,
     "calculate_total": CALCULATE_TOTAL_TOOL,
@@ -408,6 +440,10 @@ def get_available_tools(business_dict: dict) -> list:
         UPDATE_CUSTOMER_INFO_TOOL,
         ESCALATE_TO_HUMAN_TOOL,
     ]
+
+    # Address update only makes sense with e-commerce
+    if features.get('ecommerce_enabled', True):
+        tools.insert(-1, UPDATE_ORDER_ADDRESS_TOOL)  # before escalate
     
     # E-commerce tools
     if features.get('ecommerce_enabled', True):

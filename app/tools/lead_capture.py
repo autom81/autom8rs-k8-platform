@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.models.lead import Lead, LeadClassificationEnum, LeadStatusEnum, Order, OrderStatusEnum
 from app.models.conversation import Conversation
+from app.models.appointment import Appointment, AppointmentStatusEnum
 
 logger = logging.getLogger(__name__)
 
@@ -275,37 +276,30 @@ def update_customer_info(
         if email:
             lead.email = email
 
-        # Sync to any open (non-delivered, non-cancelled) orders
-        open_statuses = [
+        open_order_statuses = [
             OrderStatusEnum.pending,
             OrderStatusEnum.confirmed,
             OrderStatusEnum.paid,
             OrderStatusEnum.shipped,
         ]
+        open_appt_statuses = [
+            AppointmentStatusEnum.pending,
+            AppointmentStatusEnum.confirmed,
+        ]
+
+        # Resolve phone to use for fallback matching (before we overwrite lead.phone)
+        match_phone = lead.phone
+
+        # Sync to open orders
         open_orders = (
             db.query(Order)
             .filter(
                 Order.business_id == conversation.business_id,
-                Order.status.in_(open_statuses),
+                Order.customer_phone == match_phone,
+                Order.status.in_(open_order_statuses),
             )
-            .join(Lead, Lead.conversation_id == conversation.id)
-            .filter(Lead.id == lead.id)
             .all()
-        )
-
-        # Fallback: match by phone if join yields nothing
-        if not open_orders and lead.phone:
-            original_phone = lead.phone if not phone else None
-            if original_phone:
-                open_orders = (
-                    db.query(Order)
-                    .filter(
-                        Order.business_id == conversation.business_id,
-                        Order.customer_phone == original_phone,
-                        Order.status.in_(open_statuses),
-                    )
-                    .all()
-                )
+        ) if match_phone else []
 
         updated_orders = 0
         for order in open_orders:
@@ -315,17 +309,37 @@ def update_customer_info(
                 order.customer_phone = phone
             updated_orders += 1
 
+        # Sync to open appointments
+        open_appts = (
+            db.query(Appointment)
+            .filter(
+                Appointment.business_id == conversation.business_id,
+                Appointment.customer_phone == match_phone,
+                Appointment.status.in_(open_appt_statuses),
+            )
+            .all()
+        ) if match_phone else []
+
+        updated_appts = 0
+        for appt in open_appts:
+            if name:
+                appt.customer_name = name
+            if phone:
+                appt.customer_phone = phone
+            updated_appts += 1
+
         db.commit()
 
         updated = [f for f, v in [("name", name), ("phone", phone), ("email", email)] if v]
         logger.info(
             f"Customer info updated: fields={updated}, lead={lead.id}, "
-            f"orders_synced={updated_orders}"
+            f"orders_synced={updated_orders}, appointments_synced={updated_appts}"
         )
         return {
             "success": True,
             "updated_fields": updated,
             "orders_synced": updated_orders,
+            "appointments_synced": updated_appts,
             "message": f"Updated {', '.join(updated)} successfully"
         }
 
@@ -333,3 +347,56 @@ def update_customer_info(
         logger.error(f"Error updating customer info: {e}", exc_info=True)
         db.rollback()
         return {"success": False, "error": str(e), "message": "Failed to update customer info"}
+
+
+def update_order_address(
+    db: Session,
+    conversation: Conversation,
+    order_number: str,
+    new_address: str,
+) -> dict:
+    """
+    TOOL: Update the delivery address on a specific open order.
+
+    Only works on pending/confirmed/paid orders — not shipped or delivered.
+    """
+    try:
+        editable_statuses = [
+            OrderStatusEnum.pending,
+            OrderStatusEnum.confirmed,
+            OrderStatusEnum.paid,
+        ]
+        order = (
+            db.query(Order)
+            .filter(
+                Order.business_id == conversation.business_id,
+                Order.order_number == order_number,
+            )
+            .first()
+        )
+
+        if not order:
+            return {"success": False, "message": f"Order {order_number} not found"}
+
+        if order.status not in editable_statuses:
+            return {
+                "success": False,
+                "message": f"Order {order_number} is {order.status.value} — address can only be changed before shipping"
+            }
+
+        old_address = order.delivery_address
+        order.delivery_address = new_address
+        db.commit()
+
+        logger.info(f"Delivery address updated: order={order_number}, old='{old_address}', new='{new_address}'")
+        return {
+            "success": True,
+            "order_number": order_number,
+            "new_address": new_address,
+            "message": f"Delivery address updated for order {order_number}"
+        }
+
+    except Exception as e:
+        logger.error(f"Error updating order address: {e}", exc_info=True)
+        db.rollback()
+        return {"success": False, "error": str(e), "message": "Failed to update delivery address"}
