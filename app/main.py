@@ -1,108 +1,108 @@
-"""
-FastAPI Main Application
-UPDATED for Phase 6: Uses Alembic for migrations instead of Base.metadata.create_all()
- 
-WHY THE CHANGE:
-- Base.metadata.create_all() only CREATES new tables, can't modify existing ones
-- Alembic properly tracks schema changes with version history
-- Production-safe migrations with rollback capability
- 
-STARTUP FLOW:
-1. App starts
-2. Alembic runs pending migrations (upgrade to head)
-3. App serves requests
-"""
 import logging
 import subprocess
 import os
- 
+
 from fastapi import FastAPI, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response as FastAPIResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import text
- 
+
 from app.database import engine, get_db
-import app.models  # Forces Python to read all schema files
- 
+import app.models  # noqa: F401 — forces all models to register with SQLAlchemy
+
 from app.routes.webhooks import router as webhooks_router
 from app.routes.admin import router as admin_router
 from app.routes.auth import router as auth_router
 from app.routes.dashboard import router as dashboard_router
 from app.routes.analytics import router as analytics_router
 from app.routes.settings import router as settings_router
- 
-# Configure logging
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
- 
- 
+
+
 # ============================================================
-# ALEMBIC MIGRATION RUNNER
+# MIGRATIONS
 # ============================================================
- 
+
 def run_migrations():
-    """
-    Run pending Alembic migrations on startup.
-    This ensures the database schema is always up-to-date.
-    """
+    """Run pending Alembic migrations on startup."""
     try:
         logger.info("Running database migrations...")
-        
-        # Check if alembic is configured
         alembic_dir = os.path.join(os.getcwd(), "alembic")
         if not os.path.exists(alembic_dir):
-            logger.warning(
-                "Alembic directory not found. "
-                "Database migrations will not run. "
-                "Run 'alembic init alembic' to set up migrations."
-            )
+            logger.warning("Alembic directory not found — skipping migrations.")
             return
-        
-        # Run: alembic upgrade head
+
         result = subprocess.run(
             ["alembic", "upgrade", "head"],
             capture_output=True,
             text=True,
             check=False,
         )
-        
+
         if result.returncode == 0:
             logger.info("✅ Database migrations applied successfully")
             if result.stdout:
                 logger.info(f"Alembic output: {result.stdout.strip()}")
         else:
-            logger.error(f"❌ Migration failed: {result.stderr}")
-            # Don't crash the app - log and continue
-            # In production, you might want to raise here to prevent startup
-            
+            logger.error(f"❌ Alembic migration failed: {result.stderr}")
+
     except FileNotFoundError:
-        logger.error(
-            "Alembic not installed. Run: pip install alembic"
-        )
+        logger.error("Alembic not installed.")
     except Exception as e:
         logger.error(f"Error running migrations: {e}", exc_info=True)
- 
- 
-# ============================================================
-# FASTAPI APP SETUP
-# ============================================================
- 
-# Run migrations BEFORE the app starts accepting requests
+
+
+# Schema guard: columns that MUST exist, verified on every startup.
+# This is the safety net for the known failure mode where Alembic records a
+# migration as applied before the DDL actually commits — leaving the column
+# missing and crashing every query on that table.
+#
+# Rule: whenever you add a column to a model, add a row here too.
+_REQUIRED_COLUMNS: list[tuple[str, str, str]] = [
+    # (table, column_name, postgres_column_definition)
+    ("conversations", "pinned",     "BOOLEAN NOT NULL DEFAULT false"),
+    ("conversations", "bot_paused", "BOOLEAN NOT NULL DEFAULT false"),
+]
+
+
+def ensure_schema():
+    """Add any missing columns that Alembic may have failed to create."""
+    try:
+        from sqlalchemy import inspect as sa_inspect
+        with engine.connect() as conn:
+            inspector = sa_inspect(conn)
+            for table, col_name, col_def in _REQUIRED_COLUMNS:
+                existing = {c["name"] for c in inspector.get_columns(table)}
+                if col_name not in existing:
+                    logger.warning(f"⚠️  Column {table}.{col_name} missing — adding now")
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col_name} {col_def}"))
+                    conn.commit()
+                    logger.info(f"✅  Added {table}.{col_name}")
+    except Exception as e:
+        logger.error(f"ensure_schema failed: {e}", exc_info=True)
+
+
+# Run migrations then verify schema before the app accepts any traffic.
 run_migrations()
- 
-app = FastAPI(title="K8 Agent Platform", version="0.2.0")  # Bumped for Phase 6
+ensure_schema()
+
 
 # ============================================================
-# CORS
-# CORSMiddleware is the inner layer; ExplicitCORSMiddleware is
-# added last so it becomes the outermost layer and intercepts
-# preflight before anything else can return a response without headers.
+# FASTAPI APP
 # ============================================================
+
+app = FastAPI(title="K8 Agent Platform", version="0.2.0")
+
+# ── CORS ──────────────────────────────────────────────────────────
+# ExplicitCORSMiddleware is added LAST so it becomes the outermost layer
+# and guarantees CORS headers on every response including preflight.
 
 _ALLOWED_ORIGIN = "https://dashboard.autom8rs.com"
 _CORS_HEADERS = {
@@ -131,7 +131,6 @@ class ExplicitCORSMiddleware(BaseHTTPMiddleware):
         return response
 
 
-# Inner layer — standard CORS handling
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[_ALLOWED_ORIGIN],
@@ -141,8 +140,6 @@ app.add_middleware(
     expose_headers=["Set-Cookie"],
     max_age=3600,
 )
-
-# Outer layer — added last so it runs first, guarantees CORS headers on every response
 app.add_middleware(ExplicitCORSMiddleware)
 
 # Catch-all OPTIONS handler so no preflight ever hits a 405 at the router level
@@ -150,19 +147,18 @@ app.add_middleware(ExplicitCORSMiddleware)
 async def preflight_handler(rest_of_path: str, request: Request):
     return FastAPIResponse(status_code=200)
 
-# Register routes
 app.include_router(webhooks_router)
 app.include_router(admin_router)
 app.include_router(auth_router)
 app.include_router(dashboard_router)
 app.include_router(analytics_router)
 app.include_router(settings_router)
- 
- 
+
+
 # ============================================================
-# HEALTH CHECK ENDPOINTS
+# HEALTH CHECK
 # ============================================================
- 
+
 @app.get("/")
 async def root():
     return {
@@ -171,48 +167,34 @@ async def root():
         "version": "0.2.0",
         "message": "Hello from api.autom8rs.com",
     }
- 
- 
+
+
 @app.get("/health")
 async def health_check(db: Session = Depends(get_db)):
-    """Comprehensive health check - database + cache."""
+    """Comprehensive health check — database + cache + migration state."""
     from app.services.cache import cache_health_check
-    
-    # Check database
+
     try:
         db.execute(text("SELECT 1"))
         result = db.execute(
             text("SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public'")
         )
-        table_count = result.scalar()
-        db_status = {
-            "status": "healthy",
-            "tables": table_count,
-        }
+        db_status = {"status": "healthy", "tables": result.scalar()}
     except Exception as e:
-        db_status = {
-            "status": "unhealthy",
-            "error": str(e),
-        }
-    
-    # Check cache
+        db_status = {"status": "unhealthy", "error": str(e)}
+
     cache_status = cache_health_check()
-    
-    # Check migration state
+
     try:
-        result = db.execute(
-            text("SELECT version_num FROM alembic_version LIMIT 1")
-        )
+        result = db.execute(text("SELECT version_num FROM alembic_version LIMIT 1"))
         current_version = result.scalar()
         migration_status = {
             "current_revision": current_version,
-            "status": "up_to_date" if current_version else "no_migrations_applied"
+            "status": "up_to_date" if current_version else "no_migrations_applied",
         }
     except Exception:
-        migration_status = {
-            "status": "alembic_not_initialized",
-        }
-    
+        migration_status = {"status": "alembic_not_initialized"}
+
     return {
         "api": "online",
         "database": db_status,
