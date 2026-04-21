@@ -52,6 +52,41 @@ UPDATE_LEAD_STATUS_TOOL = {
 
 
 # ============================================================
+# UPDATE CUSTOMER INFO TOOL
+# ============================================================
+
+UPDATE_CUSTOMER_INFO_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "update_customer_info",
+        "description": (
+            "Update the customer's contact information (name, phone number, or email). "
+            "Call this whenever a customer provides or corrects their name, phone, or email. "
+            "This updates both their lead profile AND any open orders so the dashboard stays accurate."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Customer's full name (provide only if being updated)"
+                },
+                "phone": {
+                    "type": "string",
+                    "description": "Customer's phone number (provide only if being updated)"
+                },
+                "email": {
+                    "type": "string",
+                    "description": "Customer's email address (provide only if being updated)"
+                },
+            },
+            "required": []
+        }
+    }
+}
+
+
+# ============================================================
 # ESCALATION TOOL
 # ============================================================
 
@@ -342,6 +377,7 @@ SEND_PRODUCT_MEDIA_TOOL = {
 # Master dictionary of all tools by name
 ALL_TOOLS = {
     "update_lead_status": UPDATE_LEAD_STATUS_TOOL,
+    "update_customer_info": UPDATE_CUSTOMER_INFO_TOOL,
     "escalate_to_human": ESCALATE_TO_HUMAN_TOOL,
     "check_stock": CHECK_STOCK_TOOL,
     "calculate_total": CALCULATE_TOTAL_TOOL,
@@ -369,6 +405,7 @@ def get_available_tools(business_dict: dict) -> list:
     # Core tools - all businesses get these
     tools = [
         UPDATE_LEAD_STATUS_TOOL,
+        UPDATE_CUSTOMER_INFO_TOOL,
         ESCALATE_TO_HUMAN_TOOL,
     ]
     

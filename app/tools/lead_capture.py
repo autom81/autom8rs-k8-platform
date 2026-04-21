@@ -20,7 +20,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.models.lead import Lead, LeadClassificationEnum, LeadStatusEnum
+from app.models.lead import Lead, LeadClassificationEnum, LeadStatusEnum, Order, OrderStatusEnum
 from app.models.conversation import Conversation
 
 logger = logging.getLogger(__name__)
@@ -236,3 +236,100 @@ def update_lead_status(
             "error": str(e),
             "message": "Failed to update lead status"
         }
+
+
+# ============================================================
+# LLM-CALLED TOOL
+# Called by LLM when customer provides/corrects contact info
+# ============================================================
+
+def update_customer_info(
+    db: Session,
+    conversation: Conversation,
+    name: Optional[str] = None,
+    phone: Optional[str] = None,
+    email: Optional[str] = None,
+) -> dict:
+    """
+    TOOL: Update the customer's name, phone, or email.
+
+    Syncs the change to both the Lead record AND any open orders
+    so the dashboard always shows accurate contact details.
+    """
+    if not any([name, phone, email]):
+        return {"success": False, "message": "No fields provided to update"}
+
+    try:
+        lead = db.query(Lead).filter(
+            Lead.conversation_id == conversation.id
+        ).first()
+
+        if not lead:
+            return {"success": False, "message": "No lead found for this conversation"}
+
+        # Update lead fields
+        if name:
+            lead.name = name
+        if phone:
+            lead.phone = phone
+        if email:
+            lead.email = email
+
+        # Sync to any open (non-delivered, non-cancelled) orders
+        open_statuses = [
+            OrderStatusEnum.pending,
+            OrderStatusEnum.confirmed,
+            OrderStatusEnum.paid,
+            OrderStatusEnum.shipped,
+        ]
+        open_orders = (
+            db.query(Order)
+            .filter(
+                Order.business_id == conversation.business_id,
+                Order.status.in_(open_statuses),
+            )
+            .join(Lead, Lead.conversation_id == conversation.id)
+            .filter(Lead.id == lead.id)
+            .all()
+        )
+
+        # Fallback: match by phone if join yields nothing
+        if not open_orders and lead.phone:
+            original_phone = lead.phone if not phone else None
+            if original_phone:
+                open_orders = (
+                    db.query(Order)
+                    .filter(
+                        Order.business_id == conversation.business_id,
+                        Order.customer_phone == original_phone,
+                        Order.status.in_(open_statuses),
+                    )
+                    .all()
+                )
+
+        updated_orders = 0
+        for order in open_orders:
+            if name:
+                order.customer_name = name
+            if phone:
+                order.customer_phone = phone
+            updated_orders += 1
+
+        db.commit()
+
+        updated = [f for f, v in [("name", name), ("phone", phone), ("email", email)] if v]
+        logger.info(
+            f"Customer info updated: fields={updated}, lead={lead.id}, "
+            f"orders_synced={updated_orders}"
+        )
+        return {
+            "success": True,
+            "updated_fields": updated,
+            "orders_synced": updated_orders,
+            "message": f"Updated {', '.join(updated)} successfully"
+        }
+
+    except Exception as e:
+        logger.error(f"Error updating customer info: {e}", exc_info=True)
+        db.rollback()
+        return {"success": False, "error": str(e), "message": "Failed to update customer info"}
