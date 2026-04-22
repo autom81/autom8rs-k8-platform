@@ -463,10 +463,29 @@ def place_order(
 
         db.commit()
         db.refresh(order)
-        
+
         # Invalidate product cache since inventory changed
         ProductCache.invalidate(conversation.business_id)
-        
+
+        # Fire workflow trigger (non-blocking)
+        try:
+            from app.services.workflow_engine import fire_trigger
+            lead_id = str(lead.id) if lead else None
+            fire_trigger(
+                business_id=str(conversation.business_id),
+                trigger_type="order_placed",
+                trigger_data={
+                    "order_id": str(order.id),
+                    "order_number": order_number,
+                    "total": str(total),
+                    "customer_name": customer_name,
+                    "customer_phone": customer_phone,
+                },
+                lead_id=lead_id,
+            )
+        except Exception as wf_err:
+            logger.warning(f"Workflow trigger failed (order_placed): {wf_err}")
+
         logger.info(
             f"Order placed: {order_number}, "
             f"customer={customer_name}, total=${total}, "
@@ -674,12 +693,25 @@ def cancel_order(
                 auto_tag_lead(db, conversation.business_id, lead.id, ["cancelled"])
 
             db.commit()
-            
+
             # Invalidate product cache
             ProductCache.invalidate(conversation.business_id)
-            
+
+            # Fire workflow trigger
+            try:
+                from app.services.workflow_engine import fire_trigger
+                cancel_lead = db.query(Lead).filter(Lead.conversation_id == conversation.id).first()
+                fire_trigger(
+                    business_id=str(conversation.business_id),
+                    trigger_type="order_cancelled",
+                    trigger_data={"order_number": order.order_number, "reason": reason},
+                    lead_id=str(cancel_lead.id) if cancel_lead else None,
+                )
+            except Exception as wf_err:
+                logger.warning(f"Workflow trigger failed (order_cancelled): {wf_err}")
+
             logger.info(f"Order cancelled: {order.order_number}")
-            
+
             return {
                 "success": True,
                 "cancelled": True,

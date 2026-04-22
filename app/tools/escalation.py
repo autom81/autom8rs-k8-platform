@@ -96,7 +96,7 @@ def escalate_to_human(
         db.commit()
         db.refresh(conversation)
 
-        # Auto-tag the lead
+        # Auto-tag the lead and fire workflow trigger
         try:
             from app.services.tag_service import auto_tag_lead
             lead = db.query(Lead).filter(Lead.conversation_id == conversation.id).first()
@@ -105,6 +105,18 @@ def escalate_to_human(
                 db.commit()
         except Exception as tag_err:
             logger.warning(f"Could not apply escalated tag: {tag_err}")
+
+        try:
+            from app.services.workflow_engine import fire_trigger
+            esc_lead = db.query(Lead).filter(Lead.conversation_id == conversation.id).first()
+            fire_trigger(
+                business_id=str(conversation.business_id),
+                trigger_type="escalation_created",
+                trigger_data={"reason": reason, "urgency": urgency},
+                lead_id=str(esc_lead.id) if esc_lead else None,
+            )
+        except Exception as wf_err:
+            logger.warning(f"Workflow trigger failed (escalation_created): {wf_err}")
 
         logger.info(
             f"Conversation escalated: id={conversation.id}, "

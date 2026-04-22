@@ -61,6 +61,9 @@ from app.models.broadcast import BroadcastTemplate, Broadcast, BroadcastRecipien
 # Tags system
 from app.models.tag import Tag, LeadTag, TagTypeEnum
 
+# Phase 9: Workflows
+from app.models.workflow import Workflow, WorkflowExecution, WorkflowStatus, ExecutionStatus
+
 
 __all__ = [
     # Business
@@ -107,5 +110,11 @@ __all__ = [
     "Tag",
     "LeadTag",
     "TagTypeEnum",
+
+    # Phase 9: Workflows
+    "Workflow",
+    "WorkflowExecution",
+    "WorkflowStatus",
+    "ExecutionStatus",
 ]
  

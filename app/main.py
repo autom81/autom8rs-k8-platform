@@ -19,12 +19,38 @@ from app.routes.dashboard import router as dashboard_router
 from app.routes.analytics import router as analytics_router
 from app.routes.settings import router as settings_router
 from app.routes.tags import router as tags_router
+from app.routes.workflows import router as workflows_router
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# SCHEDULER
+# ============================================================
+
+def _start_scheduler():
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+        from app.services.workflow_engine import resume_waiting_executions
+
+        scheduler = BackgroundScheduler(timezone="UTC")
+        scheduler.add_job(
+            resume_waiting_executions,
+            trigger="interval",
+            minutes=5,
+            id="resume_workflows",
+            replace_existing=True,
+        )
+        scheduler.start()
+        logger.info("✅ APScheduler started — workflows will resume every 5 minutes")
+        return scheduler
+    except Exception as e:
+        logger.error(f"Failed to start APScheduler: {e}", exc_info=True)
+        return None
 
 
 # ============================================================
@@ -96,6 +122,7 @@ def ensure_schema():
 # Run migrations then verify schema before the app accepts any traffic.
 run_migrations()
 ensure_schema()
+_scheduler = _start_scheduler()
 
 
 # ============================================================
@@ -158,6 +185,7 @@ app.include_router(dashboard_router)
 app.include_router(analytics_router)
 app.include_router(settings_router)
 app.include_router(tags_router)
+app.include_router(workflows_router)
 
 
 # ============================================================
