@@ -30,7 +30,7 @@ class Workflow(Base):
     trigger_type = Column(String(100), nullable=False)
     trigger_config = Column(JSONB, nullable=True)       # optional filter conditions
     steps = Column(JSONB, nullable=False, default=list) # ordered step definitions
-    status = Column(SAEnum(WorkflowStatus), nullable=False, default=WorkflowStatus.draft)
+    status = Column(SAEnum(WorkflowStatus, create_type=False), nullable=False, default=WorkflowStatus.draft)
     execution_count = Column(Integer, nullable=False, default=0)
     last_triggered_at = Column(DateTime(timezone=True), nullable=True)
     created_by = Column(Uuid(as_uuid=True), ForeignKey("users.id"), nullable=True)
@@ -47,7 +47,7 @@ class WorkflowExecution(Base):
     lead_id = Column(Uuid(as_uuid=True), ForeignKey("leads.id"), nullable=True)
     trigger_event = Column(String(100), nullable=True)
     trigger_data = Column(JSONB, nullable=True)           # snapshot at trigger time
-    status = Column(SAEnum(ExecutionStatus), nullable=False, default=ExecutionStatus.running)
+    status = Column(SAEnum(ExecutionStatus, create_type=False), nullable=False, default=ExecutionStatus.running)
     current_step_index = Column(Integer, nullable=False, default=0)
     resume_at = Column(DateTime(timezone=True), nullable=True)
     steps_completed = Column(JSONB, nullable=True, default=list)
