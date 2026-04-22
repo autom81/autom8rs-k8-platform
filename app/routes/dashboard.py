@@ -16,7 +16,7 @@ import csv
 import io
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from typing import Optional
 
@@ -600,13 +600,22 @@ def _leads_query(db: Session, business_id: uuid.UUID,
     q = db.query(Lead).filter(Lead.business_id == business_id)
 
     if needs_attention:
+        now = datetime.now(timezone.utc)
         q = q.filter(
-            Lead.classification == LeadClassificationEnum.hot,
-            Lead.status.notin_([
-                LeadStatusEnum.converted,
-                LeadStatusEnum.lost,
-                LeadStatusEnum.unqualified,
-            ])
+            or_(
+                and_(
+                    Lead.classification == LeadClassificationEnum.hot,
+                    Lead.status.notin_([
+                        LeadStatusEnum.converted,
+                        LeadStatusEnum.lost,
+                        LeadStatusEnum.unqualified,
+                    ])
+                ),
+                and_(
+                    Lead.follow_up_at.isnot(None),
+                    Lead.follow_up_at <= now + timedelta(hours=24),
+                )
+            )
         )
     else:
         if status:
@@ -622,11 +631,7 @@ def _leads_query(db: Session, business_id: uuid.UUID,
                 raise HTTPException(status_code=400, detail=f"Invalid classification: {classification}")
 
     if follow_up_due:
-        now = datetime.now(timezone.utc)
-        q = q.filter(
-            Lead.follow_up_at.isnot(None),
-            Lead.follow_up_at <= now,
-        )
+        q = q.filter(Lead.follow_up_at.isnot(None))
 
     if channel:
         q = q.filter(Lead.source_channel == channel)
