@@ -101,7 +101,7 @@ def create_workflow(
     current_user: dict = Depends(get_current_user),
 ):
     # Tier check
-    if current_user["tier"] not in ("pro", "ultra"):
+    if current_user["tier"] not in ("pro", "ultra", "custom"):
         raise HTTPException(status_code=403, detail="Workflows require Pro or Ultra plan")
 
     # Active workflow limit
@@ -222,7 +222,7 @@ def toggle_workflow_status(
         workflow.status = WorkflowStatus.paused
     elif workflow.status in (WorkflowStatus.draft, WorkflowStatus.paused):
         # Tier check before activating
-        if current_user["tier"] not in ("pro", "ultra"):
+        if current_user["tier"] not in ("pro", "ultra", "custom"):
             raise HTTPException(status_code=403, detail="Workflows require Pro or Ultra plan")
         active_count = db.query(Workflow).filter(
             Workflow.business_id == uuid.UUID(current_user["business_id"]),

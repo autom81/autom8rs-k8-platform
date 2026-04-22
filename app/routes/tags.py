@@ -22,12 +22,12 @@ logger = logging.getLogger(__name__)
 
 # ── Auth helper ────────────────────────────────────────────────────
 
-def _business_id(access_token: Optional[str] = Cookie(None)) -> uuid.UUID:
-    if not access_token:
+def _business_id(autom8rs_session: Optional[str] = Cookie(None)) -> uuid.UUID:
+    if not autom8rs_session:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    payload = decode_token(access_token)
+    payload = decode_token(autom8rs_session)
     if not payload:
-        raise HTTPException(status_code=401, detail="Invalid token")
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
     return uuid.UUID(payload["business_id"])
 
 
