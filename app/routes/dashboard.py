@@ -30,6 +30,7 @@ from app.database import get_db
 from app.models.business import Business, Product, ProductStatusEnum, ProductSourceEnum
 from app.models.conversation import Conversation, Message, ConvoStatusEnum, RoleEnum
 from app.models.lead import Lead, LeadStatusEnum, LeadClassificationEnum, OrderStatusEnum, Order
+from app.models.tag import Tag, LeadTag
 from app.services.auth_service import decode_token
 from app.services.cache import ProductCache
 from app.services.meta import send_reply
@@ -92,7 +93,7 @@ def _serialize_message(m: Message) -> dict:
     }
 
 
-def _serialize_lead(lead: Lead) -> dict:
+def _serialize_lead(lead: Lead, tags: list = None) -> dict:
     return {
         "id": str(lead.id),
         "name": lead.name,
@@ -107,6 +108,7 @@ def _serialize_lead(lead: Lead) -> dict:
         "created_at": _dt(lead.created_at),
         "last_updated": _dt(lead.last_updated),
         "conversation_id": str(lead.conversation_id) if lead.conversation_id else None,
+        "tags": tags or [],
     }
 
 
@@ -705,6 +707,27 @@ def export_leads(
     )
 
 
+def _bulk_tags(db: Session, lead_ids: list) -> dict:
+    """Return {lead_id: [tag_dict, ...]} for a list of lead IDs."""
+    if not lead_ids:
+        return {}
+    rows = (
+        db.query(LeadTag, Tag)
+        .join(Tag, Tag.id == LeadTag.tag_id)
+        .filter(LeadTag.lead_id.in_(lead_ids), Tag.is_active == True)
+        .all()
+    )
+    result: dict = {lid: [] for lid in lead_ids}
+    for lt, tag in rows:
+        result[lt.lead_id].append({
+            "id": str(tag.id),
+            "name": tag.name,
+            "color": tag.color,
+            "type": tag.tag_type.value if hasattr(tag.tag_type, "value") else tag.tag_type,
+        })
+    return result
+
+
 @router.get("/leads")
 def list_leads(
     page: int = Query(1, ge=1),
@@ -717,14 +740,40 @@ def list_leads(
     date_to: Optional[str] = Query(None),
     needs_attention: bool = Query(False),
     follow_up_due: bool = Query(False),
+    tag_ids: Optional[str] = Query(None),
+    tag_match: str = Query("any"),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
     business_id = _business_uuid(current_user)
     q = _leads_query(db, business_id, status, classification, channel, search, date_from, date_to, needs_attention, follow_up_due)
+
+    # Tag filtering
+    if tag_ids:
+        try:
+            tids = [uuid.UUID(t.strip()) for t in tag_ids.split(",") if t.strip()]
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid tag_ids format")
+        if tids:
+            if tag_match == "all":
+                for tid in tids:
+                    q = q.filter(
+                        Lead.id.in_(
+                            db.query(LeadTag.lead_id).filter(LeadTag.tag_id == tid)
+                        )
+                    )
+            else:
+                q = q.filter(
+                    Lead.id.in_(
+                        db.query(LeadTag.lead_id).filter(LeadTag.tag_id.in_(tids))
+                    )
+                )
+
     leads, total = _paginate(q, page, page_size)
+    lead_ids = [l.id for l in leads]
+    tags_map = _bulk_tags(db, lead_ids)
     return {
-        "leads": [_serialize_lead(l) for l in leads],
+        "leads": [_serialize_lead(l, tags_map.get(l.id, [])) for l in leads],
         "total": total,
         "page": page,
         "page_size": page_size,

@@ -58,6 +58,9 @@ from app.models.media import (
 from app.models.user import User
 from app.models.broadcast import BroadcastTemplate, Broadcast, BroadcastRecipient
 
+# Tags system
+from app.models.tag import Tag, LeadTag, TagTypeEnum
+
 
 __all__ = [
     # Business
@@ -99,5 +102,10 @@ __all__ = [
     "BroadcastTemplate",
     "Broadcast",
     "BroadcastRecipient",
+
+    # Tags
+    "Tag",
+    "LeadTag",
+    "TagTypeEnum",
 ]
  

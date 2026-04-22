@@ -18,6 +18,7 @@ from app.routes.auth import router as auth_router
 from app.routes.dashboard import router as dashboard_router
 from app.routes.analytics import router as analytics_router
 from app.routes.settings import router as settings_router
+from app.routes.tags import router as tags_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -156,6 +157,7 @@ app.include_router(auth_router)
 app.include_router(dashboard_router)
 app.include_router(analytics_router)
 app.include_router(settings_router)
+app.include_router(tags_router)
 
 
 # ============================================================

@@ -28,6 +28,7 @@ from app.models.business import Business, Product, ProductStatusEnum
 from app.models.conversation import Conversation
 from app.models.lead import Lead, Order, OrderStatusEnum, LeadClassificationEnum, LeadStatusEnum
 from app.services.cache import ProductCache, BusinessCache
+from app.services.tag_service import auto_tag_lead
 from app.tools.escalation import escalate_to_human
 
 logger = logging.getLogger(__name__)
@@ -445,7 +446,21 @@ def place_order(
             lead.name = customer_name  # Update with confirmed name
             if not lead.phone:
                 lead.phone = customer_phone
-        
+
+            # Auto-tag: ordered + product categories + returning-customer
+            tag_names = ["ordered"]
+            categories = {item.get("category", "").lower().strip() for item in order_items if item.get("category")}
+            tag_names.extend(c.replace(" ", "-") for c in categories if c)
+            prior_orders = db.query(Order).filter(
+                Order.conversation_id != conversation.id,
+                Order.business_id == order.business_id,
+            ).join(
+                Lead, Lead.conversation_id == Order.conversation_id
+            ).filter(Lead.phone == customer_phone).count()
+            if prior_orders > 0:
+                tag_names.append("returning-customer")
+            auto_tag_lead(db, conversation.business_id, lead.id, tag_names)
+
         db.commit()
         db.refresh(order)
         
@@ -655,7 +670,9 @@ def cancel_order(
             if lead and lead.classification == LeadClassificationEnum.hot:
                 lead.classification = LeadClassificationEnum.warm
                 lead.status = LeadStatusEnum.nurture
-            
+            if lead:
+                auto_tag_lead(db, conversation.business_id, lead.id, ["cancelled"])
+
             db.commit()
             
             # Invalidate product cache

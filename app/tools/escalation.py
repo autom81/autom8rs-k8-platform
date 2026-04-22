@@ -23,6 +23,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.models.conversation import Conversation, Message, ConvoStatusEnum, RoleEnum
+from app.models.lead import Lead
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +95,17 @@ def escalate_to_human(
         
         db.commit()
         db.refresh(conversation)
-        
+
+        # Auto-tag the lead
+        try:
+            from app.services.tag_service import auto_tag_lead
+            lead = db.query(Lead).filter(Lead.conversation_id == conversation.id).first()
+            if lead:
+                auto_tag_lead(db, conversation.business_id, lead.id, ["escalated"])
+                db.commit()
+        except Exception as tag_err:
+            logger.warning(f"Could not apply escalated tag: {tag_err}")
+
         logger.info(
             f"Conversation escalated: id={conversation.id}, "
             f"urgency={urgency}, reason={reason}"
