@@ -203,8 +203,20 @@ def schedule_appointment(
             f"To reschedule or cancel, just let us know!"
         )
         
-        # TODO Phase 8: Trigger n8n workflow for calendar invite + SMS reminder
-        
+        try:
+            from app.services.workflow_engine import fire_trigger
+            from app.models.lead import Lead
+            lead = db.query(Lead).filter(Lead.conversation_id == conversation.id).first()
+            fire_trigger("appointment_booked", db, conversation.business_id,
+                         lead.id if lead else None, {
+                "appointment_id": str(appointment.id),
+                "service_type": service_type,
+                "appointment_datetime": f"{appointment_date}T{appointment_time}",
+                "customer_name": customer_name,
+            })
+        except Exception:
+            pass
+
         return {
             "success": True,
             "appointment_id": str(appointment.id),

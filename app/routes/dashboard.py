@@ -414,6 +414,17 @@ def resolve_conversation(
 
     conv.status = ConvoStatusEnum.resolved
     db.commit()
+
+    try:
+        from app.models.lead import Lead
+        from app.services.workflow_engine import fire_trigger
+        lead = db.query(Lead).filter(Lead.conversation_id == conv.id).first()
+        fire_trigger("conversation_resolved", db, business_id, lead.id if lead else None, {
+            "conversation_id": str(conv.id),
+        })
+    except Exception:
+        pass
+
     return {"status": "ok", "conversation_id": conversation_id, "new_status": "resolved"}
 
 

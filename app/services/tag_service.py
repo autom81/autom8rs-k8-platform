@@ -85,6 +85,21 @@ def apply_tag_to_lead(
             return False
 
         db.add(LeadTag(lead_id=lead_id, tag_id=tag.id, applied_by=applied_by))
+        db.flush()
+
+        try:
+            from app.models.lead import Lead
+            from app.services.workflow_engine import fire_trigger
+            lead = db.query(Lead).filter(Lead.id == lead_id).first()
+            if lead:
+                fire_trigger("lead_tag_applied", db, lead.business_id, lead_id, {
+                    "tag_id": str(tag.id),
+                    "tag_name": tag.name,
+                    "applied_by": applied_by,
+                })
+        except Exception:
+            pass
+
         return True
 
     except Exception as e:

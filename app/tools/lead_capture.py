@@ -100,7 +100,18 @@ def capture_lead(
             f"conversation={conversation.id}, "
             f"channel={conversation.channel}"
         )
-        
+
+        try:
+            from app.services.workflow_engine import fire_trigger
+            fire_trigger("new_lead", db, conversation.business_id, lead.id, {
+                "lead_id": str(lead.id),
+                "channel": str(conversation.channel),
+                "name": lead.name,
+                "phone": lead.phone,
+            })
+        except Exception:
+            pass
+
         return {
             "success": True,
             "lead_id": str(lead.id),
@@ -212,15 +223,25 @@ def update_lead_status(
                 lead.status = LeadStatusEnum.connected
             elif classification == "spam":
                 lead.status = LeadStatusEnum.unqualified
-            
+
             logger.info(
                 f"Lead classification updated: {old_classification} → {classification} "
                 f"(lead_id={lead.id}, conversation={conversation.id})"
             )
-        
+
         db.commit()
         db.refresh(lead)
-        
+
+        if classification == "hot":
+            try:
+                from app.services.workflow_engine import fire_trigger
+                fire_trigger("hot_lead_detected", db, conversation.business_id, lead.id, {
+                    "lead_id": str(lead.id),
+                    "interest_area": interest_area,
+                })
+            except Exception:
+                pass
+
         return {
             "success": True,
             "lead_id": str(lead.id),

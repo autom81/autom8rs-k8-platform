@@ -238,6 +238,8 @@ def _execute_action(
 ) -> bool:
     action_type = step.get("action_type")
     try:
+        if action_type == "send_message":
+            return _action_send_message(step, execution, db)
         if action_type == "send_template":
             return _action_send_template(step, execution, db)
         if action_type == "send_notification":
@@ -256,6 +258,81 @@ def _execute_action(
         return False
     except Exception as e:
         logger.error(f"Action {action_type} failed in execution {execution.id}: {e}", exc_info=True)
+        return False
+
+
+def _action_send_message(step: dict, execution: WorkflowExecution, db: Session) -> bool:
+    """Send a free-text message to the customer via their original channel (within 24h window)."""
+    from app.models.conversation import Conversation
+
+    message_text = (step.get("message") or "").strip()
+    recipient = step.get("recipient", "customer")
+
+    if not message_text:
+        logger.warning(f"send_message step has no message text in execution {execution.id}")
+        return False
+
+    business = db.query(Business).filter(Business.id == execution.business_id).first()
+    if not business:
+        return False
+
+    if recipient == "owner":
+        # Send to owner's WhatsApp number
+        to_phone = business.owner_phone
+        if not to_phone or not business.meta_phone_number_id:
+            logger.warning(f"No owner_phone or phone_number_id for business {execution.business_id}")
+            return False
+        try:
+            loop = asyncio.new_event_loop()
+            result = loop.run_until_complete(
+                _send_whatsapp_free_text(business.meta_phone_number_id, to_phone, message_text)
+            )
+            loop.close()
+            return "error" not in result
+        except Exception as e:
+            logger.error(f"send_message to owner failed: {e}")
+            return False
+
+    # Customer — send via their original channel
+    if not execution.lead_id:
+        logger.warning(f"send_message: no lead_id on execution {execution.id}")
+        return False
+
+    if not _check_customer_rate_limit(execution.lead_id, execution.business_id, db):
+        logger.info(f"Rate limit hit for lead {execution.lead_id}, skipping send_message")
+        return False
+
+    lead = db.query(Lead).filter(Lead.id == execution.lead_id).first()
+    if not lead or not lead.conversation_id:
+        return False
+
+    conv = db.query(Conversation).filter(Conversation.id == lead.conversation_id).first()
+    if not conv:
+        return False
+
+    channel = conv.channel.value if hasattr(conv.channel, "value") else str(conv.channel)
+
+    try:
+        loop = asyncio.new_event_loop()
+        if channel == "whatsapp":
+            if not business.meta_phone_number_id:
+                return False
+            result = loop.run_until_complete(
+                _send_whatsapp_free_text(business.meta_phone_number_id, conv.external_user_id, message_text)
+            )
+        else:
+            # Instagram or Messenger
+            result = loop.run_until_complete(
+                _send_messenger_free_text(
+                    recipient_id=conv.external_user_id,
+                    text=message_text,
+                    page_access_token=business.meta_page_access_token,
+                )
+            )
+        loop.close()
+        return "error" not in result
+    except Exception as e:
+        logger.error(f"send_message to customer failed: {e}")
         return False
 
 
@@ -317,9 +394,8 @@ def _action_send_template(step: dict, execution: WorkflowExecution, db: Session)
 
 
 def _action_send_notification(step: dict, execution: WorkflowExecution, db: Session) -> bool:
-    """Send a WhatsApp notification to the business owner."""
-    step["recipient"] = "owner"
-    return _action_send_template(step, execution, db)
+    """Send a free-text WhatsApp notification to the business owner."""
+    return _action_send_message({**step, "recipient": "owner"}, execution, db)
 
 
 def _action_apply_tag(step: dict, execution: WorkflowExecution, db: Session) -> bool:
@@ -420,6 +496,49 @@ def _check_customer_rate_limit(
         WorkflowExecution.status == ExecutionStatus.completed,
     ).count()
     return recent < MAX_MSGS_PER_CUSTOMER_24H
+
+
+# ── Meta free-text send helpers ──────────────────────────────────
+
+async def _send_whatsapp_free_text(phone_number_id: str, to: str, text: str) -> dict:
+    import httpx
+    from app.config import settings
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"https://graph.facebook.com/v19.0/{phone_number_id}/messages",
+            headers={"Authorization": f"Bearer {settings.META_ACCESS_TOKEN}"},
+            json={
+                "messaging_product": "whatsapp",
+                "to": to,
+                "type": "text",
+                "text": {"body": text},
+            },
+            timeout=10,
+        )
+        data = resp.json()
+        if resp.status_code != 200:
+            logger.error(f"WhatsApp free-text send failed: {data}")
+        return data
+
+
+async def _send_messenger_free_text(recipient_id: str, text: str, page_access_token: str) -> dict:
+    import httpx
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            "https://graph.facebook.com/v19.0/me/messages",
+            headers={"Authorization": f"Bearer {page_access_token}"},
+            json={
+                "recipient": {"id": recipient_id},
+                "message": {"text": text},
+                "messaging_type": "MESSAGE_TAG",
+                "tag": "CONFIRMED_EVENT_UPDATE",
+            },
+            timeout=10,
+        )
+        data = resp.json()
+        if resp.status_code != 200:
+            logger.error(f"Messenger free-text send failed: {data}")
+        return data
 
 
 # ── Meta template send helper ─────────────────────────────────────
