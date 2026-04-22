@@ -94,17 +94,16 @@ def list_tags(
     db: Session = Depends(get_db),
     business_id: uuid.UUID = Depends(_business_id),
 ):
-    tags = (
-        db.query(Tag)
+    from sqlalchemy import func as sqlfunc
+    rows = (
+        db.query(Tag, sqlfunc.count(LeadTag.lead_id).label("lead_count"))
+        .outerjoin(LeadTag, LeadTag.tag_id == Tag.id)
         .filter(Tag.business_id == business_id, Tag.is_active == True)
+        .group_by(Tag.id)
         .order_by(Tag.name)
         .all()
     )
-    result = []
-    for tag in tags:
-        count = db.query(LeadTag).filter(LeadTag.tag_id == tag.id).count()
-        result.append(_serialize(tag, count))
-    return {"tags": result}
+    return {"tags": [_serialize(tag, count) for tag, count in rows]}
 
 
 @router.post("/api/tags")
