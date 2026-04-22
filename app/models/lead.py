@@ -136,9 +136,11 @@ class Order(Base):
     delivery_address = Column(Text, nullable=True)
     special_instructions = Column(Text, nullable=True)
     
-    # Status tracking for smart cancellation
+    # Status tracking
+    confirmed_at = Column(DateTime(timezone=True), nullable=True)
     shipped_at = Column(DateTime(timezone=True), nullable=True)
+    delivered_at = Column(DateTime(timezone=True), nullable=True)
     cancelled_at = Column(DateTime(timezone=True), nullable=True)
     cancellation_reason = Column(Text, nullable=True)
-    
+
     # ========== END PHASE 6 ADDITIONS ==========

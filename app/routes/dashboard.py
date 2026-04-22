@@ -22,7 +22,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 from sqlalchemy import and_, or_, desc
 from sqlalchemy.orm import Session
 
@@ -816,6 +816,18 @@ class CreateProductRequest(BaseModel):
     quantity: int = 0
     product_url: Optional[str] = None
 
+    @validator('price')
+    def price_must_be_positive(cls, v):
+        if v < 0:
+            raise ValueError('Price cannot be negative')
+        return v
+
+    @validator('quantity')
+    def quantity_must_be_non_negative(cls, v):
+        if v < 0:
+            raise ValueError('Quantity cannot be negative')
+        return v
+
 
 @router.post("/products", status_code=201)
 def create_product(
@@ -859,6 +871,18 @@ class UpdateProductRequest(BaseModel):
     currency: Optional[str] = None
     quantity: Optional[int] = None
     product_url: Optional[str] = None
+
+    @validator('price', pre=True, always=True)
+    def price_must_be_positive(cls, v):
+        if v is not None and v < 0:
+            raise ValueError('Price cannot be negative')
+        return v
+
+    @validator('quantity', pre=True, always=True)
+    def quantity_must_be_non_negative(cls, v):
+        if v is not None and v < 0:
+            raise ValueError('Quantity cannot be negative')
+        return v
 
 
 @router.patch("/products/{product_id}")
@@ -1091,11 +1115,15 @@ def update_order_status(
 
     order.status = new_status
 
+    now = datetime.now(timezone.utc)
+    if new_status == OrderStatusEnum.confirmed and not getattr(order, 'confirmed_at', None):
+        order.confirmed_at = now
     if new_status == OrderStatusEnum.shipped and not order.shipped_at:
-        order.shipped_at = datetime.now(timezone.utc)
-
+        order.shipped_at = now
+    if new_status == OrderStatusEnum.delivered and not getattr(order, 'delivered_at', None):
+        order.delivered_at = now
     if new_status == OrderStatusEnum.cancelled and not order.cancelled_at:
-        order.cancelled_at = datetime.now(timezone.utc)
+        order.cancelled_at = now
 
     try:
         db.commit()

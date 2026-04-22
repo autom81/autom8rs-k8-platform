@@ -201,7 +201,10 @@ def calculate_total(
         
         for item in items:
             product_name = item.get('product_name', '')
-            quantity = int(item.get('quantity', 1))
+            try:
+                quantity = int(item.get('quantity', 1))
+            except (ValueError, TypeError):
+                quantity = 1
             
             product = ProductCache.find_by_name(
                 db,
@@ -348,7 +351,10 @@ def place_order(
         
         for item in items:
             product_name = item.get('product_name', '').strip()
-            quantity = int(item.get('quantity', 1))
+            try:
+                quantity = int(item.get('quantity', 1))
+            except (ValueError, TypeError):
+                quantity = 1
             
             if quantity < 1:
                 return {
@@ -634,7 +640,11 @@ def cancel_order(
                     ).first()
                     
                     if product:
-                        product.quantity = (product.quantity or 0) + int(item.get('quantity', 0))
+                        try:
+                            qty = int(item.get('quantity', 0))
+                        except (ValueError, TypeError):
+                            qty = 0
+                        product.quantity = (product.quantity or 0) + qty
                         if product.status == ProductStatusEnum.out_of_stock and product.quantity > 0:
                             product.status = ProductStatusEnum.active
             

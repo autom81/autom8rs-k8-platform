@@ -67,8 +67,10 @@ def run_migrations():
 # Rule: whenever you add a column to a model, add a row here too.
 _REQUIRED_COLUMNS: list[tuple[str, str, str]] = [
     # (table, column_name, postgres_column_definition)
-    ("conversations", "pinned",     "BOOLEAN NOT NULL DEFAULT false"),
-    ("conversations", "bot_paused", "BOOLEAN NOT NULL DEFAULT false"),
+    ("conversations", "pinned",      "BOOLEAN NOT NULL DEFAULT false"),
+    ("conversations", "bot_paused",  "BOOLEAN NOT NULL DEFAULT false"),
+    ("orders",        "confirmed_at", "TIMESTAMPTZ NULL"),
+    ("orders",        "delivered_at", "TIMESTAMPTZ NULL"),
 ]
 
 
