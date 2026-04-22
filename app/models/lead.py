@@ -107,7 +107,10 @@ class Lead(Base):
         server_default=func.now(),
         onupdate=func.now()
     )
-    
+
+    # CRM: scheduled follow-up date set by agents from the dashboard
+    follow_up_at = Column(DateTime(timezone=True), nullable=True)
+
     # ========== END PHASE 6 ADDITIONS ==========
  
  

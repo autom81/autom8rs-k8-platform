@@ -71,6 +71,7 @@ _REQUIRED_COLUMNS: list[tuple[str, str, str]] = [
     ("conversations", "bot_paused",  "BOOLEAN NOT NULL DEFAULT false"),
     ("orders",        "confirmed_at", "TIMESTAMPTZ NULL"),
     ("orders",        "delivered_at", "TIMESTAMPTZ NULL"),
+    ("leads",         "follow_up_at", "TIMESTAMPTZ NULL"),
 ]
 
 

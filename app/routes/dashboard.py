@@ -103,6 +103,7 @@ def _serialize_lead(lead: Lead) -> dict:
         "status": lead.status.value if lead.status and hasattr(lead.status, "value") else lead.status,
         "interest_area": lead.interest_area,
         "notes": lead.notes,
+        "follow_up_at": _dt(getattr(lead, 'follow_up_at', None)),
         "created_at": _dt(lead.created_at),
         "last_updated": _dt(lead.last_updated),
         "conversation_id": str(lead.conversation_id) if lead.conversation_id else None,
@@ -594,20 +595,38 @@ def delete_conversation(
 def _leads_query(db: Session, business_id: uuid.UUID,
                  status: Optional[str], classification: Optional[str],
                  channel: Optional[str], search: Optional[str],
-                 date_from: Optional[str], date_to: Optional[str]):
+                 date_from: Optional[str], date_to: Optional[str],
+                 needs_attention: bool = False, follow_up_due: bool = False):
     q = db.query(Lead).filter(Lead.business_id == business_id)
 
-    if status:
-        try:
-            q = q.filter(Lead.status == LeadStatusEnum(status))
-        except ValueError:
-            raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
+    if needs_attention:
+        q = q.filter(
+            Lead.classification == LeadClassificationEnum.hot,
+            Lead.status.notin_([
+                LeadStatusEnum.converted,
+                LeadStatusEnum.lost,
+                LeadStatusEnum.unqualified,
+            ])
+        )
+    else:
+        if status:
+            try:
+                q = q.filter(Lead.status == LeadStatusEnum(status))
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
 
-    if classification:
-        try:
-            q = q.filter(Lead.classification == LeadClassificationEnum(classification))
-        except ValueError:
-            raise HTTPException(status_code=400, detail=f"Invalid classification: {classification}")
+        if classification:
+            try:
+                q = q.filter(Lead.classification == LeadClassificationEnum(classification))
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"Invalid classification: {classification}")
+
+    if follow_up_due:
+        now = datetime.now(timezone.utc)
+        q = q.filter(
+            Lead.follow_up_at.isnot(None),
+            Lead.follow_up_at <= now,
+        )
 
     if channel:
         q = q.filter(Lead.source_channel == channel)
@@ -644,11 +663,13 @@ def export_leads(
     search: Optional[str] = Query(None),
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
+    needs_attention: bool = Query(False),
+    follow_up_due: bool = Query(False),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
     business_id = _business_uuid(current_user)
-    leads = _leads_query(db, business_id, status, classification, channel, search, date_from, date_to).all()
+    leads = _leads_query(db, business_id, status, classification, channel, search, date_from, date_to, needs_attention, follow_up_due).all()
 
     output = io.StringIO()
     writer = csv.writer(output)
@@ -689,11 +710,13 @@ def list_leads(
     search: Optional[str] = Query(None),
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
+    needs_attention: bool = Query(False),
+    follow_up_due: bool = Query(False),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
     business_id = _business_uuid(current_user)
-    q = _leads_query(db, business_id, status, classification, channel, search, date_from, date_to)
+    q = _leads_query(db, business_id, status, classification, channel, search, date_from, date_to, needs_attention, follow_up_due)
     leads, total = _paginate(q, page, page_size)
     return {
         "leads": [_serialize_lead(l) for l in leads],
@@ -735,8 +758,10 @@ class UpdateLeadRequest(BaseModel):
     phone: Optional[str] = None
     email: Optional[str] = None
     status: Optional[str] = None
+    classification: Optional[str] = None
     notes: Optional[str] = None
     interest_area: Optional[str] = None
+    follow_up_at: Optional[str] = None  # ISO string or "" to clear
 
 
 @router.patch("/leads/{lead_id}")
@@ -771,6 +796,19 @@ def update_lead(
             lead.status = LeadStatusEnum(body.status)
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Invalid status: {body.status}")
+    if body.classification is not None:
+        try:
+            lead.classification = LeadClassificationEnum(body.classification)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid classification: {body.classification}")
+    if body.follow_up_at is not None:
+        if body.follow_up_at == "":
+            lead.follow_up_at = None
+        else:
+            try:
+                lead.follow_up_at = datetime.fromisoformat(body.follow_up_at)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid follow_up_at format")
 
     try:
         db.commit()
