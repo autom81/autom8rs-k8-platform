@@ -584,7 +584,9 @@ def delete_conversation(
         raise HTTPException(status_code=404, detail="Conversation not found")
 
     db.query(Message).filter(Message.conversation_id == cid).delete()
-    db.query(Lead).filter(Lead.conversation_id == cid).delete()
+    # Nullify the lead's conversation_id instead of deleting the lead —
+    # contacts are independent CRM records that outlive any single conversation.
+    db.query(Lead).filter(Lead.conversation_id == cid).update({"conversation_id": None})
     db.delete(conv)
     db.commit()
     return {"status": "deleted", "conversation_id": conversation_id}
@@ -711,21 +713,25 @@ def _bulk_tags(db: Session, lead_ids: list) -> dict:
     """Return {lead_id: [tag_dict, ...]} for a list of lead IDs."""
     if not lead_ids:
         return {}
-    rows = (
-        db.query(LeadTag, Tag)
-        .join(Tag, Tag.id == LeadTag.tag_id)
-        .filter(LeadTag.lead_id.in_(lead_ids), Tag.is_active == True)
-        .all()
-    )
-    result: dict = {lid: [] for lid in lead_ids}
-    for lt, tag in rows:
-        result[lt.lead_id].append({
-            "id": str(tag.id),
-            "name": tag.name,
-            "color": tag.color,
-            "type": tag.tag_type.value if hasattr(tag.tag_type, "value") else tag.tag_type,
-        })
-    return result
+    try:
+        rows = (
+            db.query(LeadTag, Tag)
+            .join(Tag, Tag.id == LeadTag.tag_id)
+            .filter(LeadTag.lead_id.in_(lead_ids), Tag.is_active == True)
+            .all()
+        )
+        result: dict = {lid: [] for lid in lead_ids}
+        for lt, tag in rows:
+            result[lt.lead_id].append({
+                "id": str(tag.id),
+                "name": tag.name,
+                "color": tag.color,
+                "type": tag.tag_type.value if hasattr(tag.tag_type, "value") else tag.tag_type,
+            })
+        return result
+    except Exception:
+        # Tags tables may not exist yet (migration pending) — return empty gracefully
+        return {lid: [] for lid in lead_ids}
 
 
 @router.get("/leads")
