@@ -102,13 +102,65 @@ _REQUIRED_COLUMNS: list[tuple[str, str, str]] = [
 ]
 
 
+_REQUIRED_TABLES: list[tuple[str, str]] = [
+    ("workflows", """
+        CREATE TABLE IF NOT EXISTS workflows (
+            id UUID PRIMARY KEY,
+            business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+            name VARCHAR(255) NOT NULL,
+            description TEXT,
+            trigger_type VARCHAR(100) NOT NULL,
+            trigger_config JSONB,
+            steps JSONB NOT NULL DEFAULT '[]',
+            status VARCHAR(50) NOT NULL DEFAULT 'draft',
+            execution_count INTEGER NOT NULL DEFAULT 0,
+            last_triggered_at TIMESTAMPTZ,
+            created_by UUID REFERENCES users(id),
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    """),
+    ("workflow_executions", """
+        CREATE TABLE IF NOT EXISTS workflow_executions (
+            id UUID PRIMARY KEY,
+            workflow_id UUID NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
+            business_id UUID NOT NULL REFERENCES businesses(id),
+            lead_id UUID REFERENCES leads(id),
+            trigger_event VARCHAR(100),
+            trigger_data JSONB,
+            status VARCHAR(50) NOT NULL DEFAULT 'running',
+            current_step_index INTEGER NOT NULL DEFAULT 0,
+            resume_at TIMESTAMPTZ,
+            steps_completed JSONB DEFAULT '[]',
+            retry_count INTEGER NOT NULL DEFAULT 0,
+            error_message TEXT,
+            started_at TIMESTAMPTZ DEFAULT NOW(),
+            completed_at TIMESTAMPTZ
+        )
+    """),
+]
+
+
 def ensure_schema():
-    """Add any missing columns that Alembic may have failed to create."""
+    """Add any missing columns/tables that Alembic may have failed to create."""
     try:
         from sqlalchemy import inspect as sa_inspect
         with engine.connect() as conn:
             inspector = sa_inspect(conn)
+            existing_tables = set(inspector.get_table_names())
+
+            # Ensure required tables exist
+            for table_name, ddl in _REQUIRED_TABLES:
+                if table_name not in existing_tables:
+                    logger.warning(f"⚠️  Table '{table_name}' missing — creating now")
+                    conn.execute(text(ddl))
+                    conn.commit()
+                    logger.info(f"✅  Created table '{table_name}'")
+
+            # Ensure required columns exist
             for table, col_name, col_def in _REQUIRED_COLUMNS:
+                if table not in existing_tables:
+                    continue
                 existing = {c["name"] for c in inspector.get_columns(table)}
                 if col_name not in existing:
                     logger.warning(f"⚠️  Column {table}.{col_name} missing — adding now")
