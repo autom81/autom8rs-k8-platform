@@ -8,8 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.routes.auth import get_current_user
-from app.models.user import User
+from app.routes.dashboard import get_current_user
 from app.models.workflow import Workflow, WorkflowExecution, WorkflowStatus, ExecutionStatus
 
 logger = logging.getLogger(__name__)
@@ -83,9 +82,9 @@ def _serialize_execution(e: WorkflowExecution) -> dict:
 def list_workflows(
     status: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
 ):
-    q = db.query(Workflow).filter(Workflow.business_id == current_user.business_id)
+    q = db.query(Workflow).filter(Workflow.business_id == uuid.UUID(current_user["business_id"]))
     if status:
         try:
             q = q.filter(Workflow.status == WorkflowStatus(status))
@@ -99,15 +98,15 @@ def list_workflows(
 def create_workflow(
     body: WorkflowCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
 ):
     # Tier check
-    if current_user.tier not in ("pro", "ultra"):
+    if current_user["tier"] not in ("pro", "ultra"):
         raise HTTPException(status_code=403, detail="Workflows require Pro or Ultra plan")
 
     # Active workflow limit
     active_count = db.query(Workflow).filter(
-        Workflow.business_id == current_user.business_id,
+        Workflow.business_id == uuid.UUID(current_user["business_id"]),
         Workflow.status == WorkflowStatus.active,
     ).count()
     if active_count >= MAX_WORKFLOWS_PER_BUSINESS:
@@ -119,7 +118,7 @@ def create_workflow(
 
     workflow = Workflow(
         id=uuid.uuid4(),
-        business_id=current_user.business_id,
+        business_id=uuid.UUID(current_user["business_id"]),
         name=body.name,
         description=body.description,
         trigger_type=body.trigger_type,
@@ -127,7 +126,7 @@ def create_workflow(
         steps=body.steps,
         status=WorkflowStatus.draft,
         execution_count=0,
-        created_by=current_user.id,
+        created_by=uuid.UUID(current_user["user_id"]),
     )
     db.add(workflow)
     db.commit()
@@ -139,11 +138,11 @@ def create_workflow(
 def get_workflow(
     workflow_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
 ):
     workflow = db.query(Workflow).filter(
         Workflow.id == uuid.UUID(workflow_id),
-        Workflow.business_id == current_user.business_id,
+        Workflow.business_id == uuid.UUID(current_user["business_id"]),
     ).first()
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
@@ -155,11 +154,11 @@ def update_workflow(
     workflow_id: str,
     body: WorkflowUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
 ):
     workflow = db.query(Workflow).filter(
         Workflow.id == uuid.UUID(workflow_id),
-        Workflow.business_id == current_user.business_id,
+        Workflow.business_id == uuid.UUID(current_user["business_id"]),
     ).first()
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
@@ -187,11 +186,11 @@ def update_workflow(
 def delete_workflow(
     workflow_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
 ):
     workflow = db.query(Workflow).filter(
         Workflow.id == uuid.UUID(workflow_id),
-        Workflow.business_id == current_user.business_id,
+        Workflow.business_id == uuid.UUID(current_user["business_id"]),
     ).first()
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
@@ -210,11 +209,11 @@ def delete_workflow(
 def toggle_workflow_status(
     workflow_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
 ):
     workflow = db.query(Workflow).filter(
         Workflow.id == uuid.UUID(workflow_id),
-        Workflow.business_id == current_user.business_id,
+        Workflow.business_id == uuid.UUID(current_user["business_id"]),
     ).first()
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
@@ -223,10 +222,10 @@ def toggle_workflow_status(
         workflow.status = WorkflowStatus.paused
     elif workflow.status in (WorkflowStatus.draft, WorkflowStatus.paused):
         # Tier check before activating
-        if current_user.tier not in ("pro", "ultra"):
+        if current_user["tier"] not in ("pro", "ultra"):
             raise HTTPException(status_code=403, detail="Workflows require Pro or Ultra plan")
         active_count = db.query(Workflow).filter(
-            Workflow.business_id == current_user.business_id,
+            Workflow.business_id == uuid.UUID(current_user["business_id"]),
             Workflow.status == WorkflowStatus.active,
         ).count()
         if active_count >= MAX_WORKFLOWS_PER_BUSINESS:
@@ -245,11 +244,11 @@ def list_workflow_executions(
     limit: int = Query(50, ge=1, le=200),
     status: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
 ):
     workflow = db.query(Workflow).filter(
         Workflow.id == uuid.UUID(workflow_id),
-        Workflow.business_id == current_user.business_id,
+        Workflow.business_id == uuid.UUID(current_user["business_id"]),
     ).first()
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
