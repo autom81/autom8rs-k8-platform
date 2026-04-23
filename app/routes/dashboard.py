@@ -1242,4 +1242,16 @@ def update_order_status(
         logger.error(f"Error updating order status {oid}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to update order status")
 
+    if new_status.value in ("shipped", "delivered"):
+        try:
+            from app.services.workflow_engine import fire_trigger
+            fire_trigger(f"order_{new_status.value}", db, business_id,
+                         getattr(order, "lead_id", None), {
+                "order_id": str(order.id),
+                "order_number": order.order_number,
+                "status": new_status.value,
+            })
+        except Exception:
+            pass
+
     return _serialize_order(order)

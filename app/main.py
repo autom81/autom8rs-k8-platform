@@ -20,6 +20,7 @@ from app.routes.analytics import router as analytics_router
 from app.routes.settings import router as settings_router
 from app.routes.tags import router as tags_router
 from app.routes.workflows import router as workflows_router
+from app.routes.broadcasts import router as broadcasts_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -238,6 +239,7 @@ app.include_router(analytics_router)
 app.include_router(settings_router)
 app.include_router(tags_router)
 app.include_router(workflows_router)
+app.include_router(broadcasts_router)
 
 
 # ============================================================
