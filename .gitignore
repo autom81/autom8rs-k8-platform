@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.*
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+.DS_Store
+
+# Local credentials — never commit
+credentials.local.md
+secrets/
+scripts/*.sql
